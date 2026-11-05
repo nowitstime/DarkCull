@@ -8,11 +8,13 @@ const DRIVE_DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 const CLIENT_ID_KEY = 'darkcull_gdrive_client_id';
 
+const ACCESS_TOKEN_KEY = 'darkcull_manual_access_token';
+
 export class DriveService {
   constructor() {
     this.tokenClient = null;
-    this.accessToken = null;
-    this.tokenExpiresAt = 0;
+    this.accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) || null;
+    this.tokenExpiresAt = this.accessToken ? Date.now() + 3600 * 1000 : 0;
   }
 
   getClientId() {
@@ -27,6 +29,23 @@ export class DriveService {
     }
   }
 
+  getManualToken() {
+    return localStorage.getItem(ACCESS_TOKEN_KEY) || '';
+  }
+
+  setManualToken(token) {
+    if (token) {
+      const cleanToken = token.trim();
+      localStorage.setItem(ACCESS_TOKEN_KEY, cleanToken);
+      this.accessToken = cleanToken;
+      this.tokenExpiresAt = Date.now() + 3600 * 1000;
+    } else {
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      this.accessToken = null;
+      this.tokenExpiresAt = 0;
+    }
+  }
+
   isAuthenticated() {
     return Boolean(this.accessToken && Date.now() < this.tokenExpiresAt);
   }
@@ -36,6 +55,13 @@ export class DriveService {
    * @returns {Promise<string>} Returns access token
    */
   async authenticate() {
+    // If user provided a direct manual OAuth Access Token (e.g. from OAuth Playground or script), use it
+    const manualToken = this.getManualToken();
+    if (manualToken) {
+      this.accessToken = manualToken;
+      return this.accessToken;
+    }
+
     const clientId = this.getClientId();
     if (!clientId) {
       throw new Error('Google Cloud OAuth Client ID is missing. Please set it in Settings.');

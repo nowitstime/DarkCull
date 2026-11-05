@@ -75,6 +75,10 @@ class DarkCullApp {
       closeSettingsBtn: document.getElementById('closeSettingsBtn'),
       clientIdInput: document.getElementById('clientIdInput'),
       saveClientIdBtn: document.getElementById('saveClientIdBtn'),
+      clearClientIdBtn: document.getElementById('clearClientIdBtn'),
+      manualTokenInput: document.getElementById('manualTokenInput'),
+      saveManualTokenBtn: document.getElementById('saveManualTokenBtn'),
+      clearManualTokenBtn: document.getElementById('clearManualTokenBtn'),
       autoAdvanceToggle: document.getElementById('autoAdvanceToggle'),
       cacheEntireShootBtn: document.getElementById('cacheEntireShootBtn'),
       clearCacheBtn: document.getElementById('clearCacheBtn'),
@@ -115,6 +119,11 @@ class DarkCullApp {
     const savedClientId = driveService.getClientId();
     if (savedClientId && this.dom.clientIdInput) {
       this.dom.clientIdInput.value = savedClientId;
+    }
+
+    const savedToken = driveService.getManualToken();
+    if (savedToken && this.dom.manualTokenInput) {
+      this.dom.manualTokenInput.value = savedToken;
     }
 
     const savedAutoAdvance = localStorage.getItem('darkcull_auto_advance');
@@ -180,8 +189,32 @@ class DarkCullApp {
     this.dom.saveClientIdBtn.addEventListener('click', () => {
       const val = this.dom.clientIdInput.value.trim();
       driveService.setClientId(val);
-      this.showToast('Client ID saved!');
+      this.showToast('Client ID saved to local storage!');
     });
+
+    if (this.dom.clearClientIdBtn) {
+      this.dom.clearClientIdBtn.addEventListener('click', () => {
+        driveService.setClientId('');
+        this.dom.clientIdInput.value = '';
+        this.showToast('Client ID cleared.');
+      });
+    }
+
+    if (this.dom.saveManualTokenBtn) {
+      this.dom.saveManualTokenBtn.addEventListener('click', () => {
+        const token = this.dom.manualTokenInput.value.trim();
+        driveService.setManualToken(token);
+        this.showToast('OAuth Access Token saved to local storage!');
+      });
+    }
+
+    if (this.dom.clearManualTokenBtn) {
+      this.dom.clearManualTokenBtn.addEventListener('click', () => {
+        driveService.setManualToken('');
+        this.dom.manualTokenInput.value = '';
+        this.showToast('Access Token cleared.');
+      });
+    }
 
     this.dom.autoAdvanceToggle.addEventListener('change', (e) => {
       this.autoAdvance = e.target.checked;
@@ -261,10 +294,12 @@ class DarkCullApp {
   // --- Folder Loading & Stem Pairing ---
 
   async openFolderPickerModal() {
-    const clientId = driveService.getClientId();
-    if (!clientId) {
+    const hasClientId = Boolean(driveService.getClientId());
+    const hasManualToken = Boolean(driveService.getManualToken());
+
+    if (!hasClientId && !hasManualToken) {
       this.dom.settingsModal.classList.add('open');
-      this.showToast('Please configure your Google Cloud Client ID first.');
+      this.showToast('Please set your Client ID (Option 1) or Access Token (Option 2) in Settings.');
       return;
     }
 

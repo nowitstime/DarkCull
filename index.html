@@ -149,11 +149,24 @@
           <button id="closeSettingsBtn" class="modal-close">&times;</button>
         </div>
 
-        <div class="form-group">
-          <label>Google Cloud OAuth Client ID</label>
+        <div class="form-group" style="border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 10px; padding: 12px; background: rgba(59, 130, 246, 0.04);">
+          <label style="color: var(--accent-hover);">Option 1: Paste Client ID Once (Recommended)</label>
           <input type="text" id="clientIdInput" placeholder="xxxx.apps.googleusercontent.com" />
-          <span class="form-hint">Stored safely in your browser's local storage. Needed for Google Drive OAuth login.</span>
-          <button id="saveClientIdBtn" class="btn-secondary" style="margin-top: 6px; align-self: flex-start;">Save Client ID</button>
+          <span class="form-hint">Stored exclusively in your browser's local storage (zero secrets in GitHub). Just tap "Sign in with Google" when prompted.</span>
+          <div style="display: flex; gap: 8px; margin-top: 6px;">
+            <button id="saveClientIdBtn" class="btn-primary" style="font-size: 12px; padding: 6px 14px;">Save Client ID</button>
+            <button id="clearClientIdBtn" class="btn-secondary" style="font-size: 12px; padding: 6px 14px;">Clear</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; background: rgba(255, 255, 255, 0.02);">
+          <label>Option 2: Direct OAuth Access Token (Temporary / Advanced)</label>
+          <input type="text" id="manualTokenInput" placeholder="ya29.a0AfH6SM..." />
+          <span class="form-hint">Paste an active OAuth Bearer token directly (e.g. from Google OAuth Playground). Stored in localStorage on this device only.</span>
+          <div style="display: flex; gap: 8px; margin-top: 6px;">
+            <button id="saveManualTokenBtn" class="btn-secondary" style="font-size: 12px; padding: 6px 14px;">Save Token</button>
+            <button id="clearManualTokenBtn" class="btn-secondary" style="font-size: 12px; padding: 6px 14px;">Clear</button>
+          </div>
         </div>
 
         <div class="toggle-group">

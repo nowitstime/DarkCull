@@ -30,29 +30,41 @@ DarkCull includes a built-in **Local Folder / SD Card Mode** powered by the HTML
 
 ---
 
-## 🔑 3-Step Google Cloud Console OAuth Setup (for Google Drive Mode)
+## 🌐 Live Web App (GitHub Pages)
 
-To cull directly from your Google Drive folders:
+DarkCull is deployed and running live at:
+### 👉 **[https://nowitstime.github.io/DarkCull/](https://nowitstime.github.io/DarkCull/)**
 
-### Step 1: Create a Google Cloud Project & Enable Drive API
-1. Navigate to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (e.g. `DarkCull`).
-3. In the left navigation, go to **APIs & Services > Library**, search for **Google Drive API**, and click **Enable**.
+> [!NOTE]
+> **Zero Secrets in Code**: 100% of credentials live exclusively in your browser's `localStorage`. The public GitHub repository is completely generic and anonymous.
 
-### Step 2: Configure the OAuth Consent Screen
-1. Go to **APIs & Services > OAuth consent screen**.
-2. Select **External** (or Internal if using Google Workspace) and click **Create**.
-3. Fill in the App Name (`DarkCull`) and your developer contact email.
-4. Add the scope: `https://www.googleapis.com/auth/drive`.
-5. Under **Test Users**, add your Google email address so you can sign in during development.
+---
 
-### Step 3: Create an OAuth 2.0 Client ID
-1. Go to **APIs & Services > Credentials** and click **+ Create Credentials > OAuth client ID**.
-2. Select **Web application** as the application type.
-3. Under **Authorized JavaScript origins**, add:
-   - `http://localhost:8000` (and `http://localhost:3000` or your production domain if hosted on GitHub Pages / Firebase Hosting).
-4. Click **Create** and copy your **Client ID** (it looks like `xxxxxxxx.apps.googleusercontent.com`).
-5. In DarkCull, click the **Settings ⚙️** icon in the top right, paste your Client ID, and click **Save Client ID**.
+## ⚡ Instant Testing (No OAuth Needed): "Local Folder Mode"
+
+DarkCull includes a built-in **Local Folder / SD Card Mode** powered by the HTML5 File System Access API (`window.showDirectoryPicker`):
+1. Click **"Local"** in the top bar or **"Open Local Folder / SD Card"** on the welcome screen.
+2. Select any local folder containing your `.JPG` and RAW files (e.g. `.RW2`, `.ORF`, `.DNG`, `.ARW`, etc.).
+3. Test instant keyboard scrubbing (`D` / `A`, `1-5`, `X` for reject, `Space` for 100% 1:1 loupe zoom).
+4. Rated photos immediately create or patch darktable-compatible `[RAW_FILENAME].xmp` files directly in your folder!
+
+---
+
+## 🔑 Authentication Patterns in Settings Modal
+
+DarkCull supports two client-side credential options stored only on your device:
+
+### Option 1: Paste Your Client ID Once (Permanent Setup - Recommended)
+1. Go to Google Cloud Console > **Credentials** > Create **OAuth client ID** (Web application).
+2. Add your **Authorized JavaScript origins**:
+   - `https://nowitstime.github.io`
+   - `http://localhost:8000`
+3. Paste your `xxxx.apps.googleusercontent.com` Client ID into **Settings ⚙️ > Option 1** and click **Save Client ID**.
+4. Now simply click "Drive" to sign in whenever your token expires. If any stranger visits your GitHub Pages site, they will only see an empty setup box asking for their own Client ID.
+
+### Option 2: Direct OAuth Access Token (Temporary / Advanced)
+- If you don't want to configure an OAuth Client ID, you can generate a temporary Google Drive access token (e.g. from the Google OAuth 2.0 Playground) and paste it into **Settings ⚙️ > Option 2**.
+- DarkCull will authenticate all Drive API calls directly with that Bearer token.
 
 ---
 
