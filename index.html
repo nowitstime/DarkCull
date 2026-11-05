@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Offline-first Google Drive photo culling PWA for darktable" />
+  <title>DarkCull — Photo Culling PWA</title>
+  
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Google Identity Services (GIS) library -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div id="appRoot">
+    <!-- Top HUD Bar -->
+    <header class="top-hud">
+      <!-- Upper row: File info + Status + Settings -->
+      <div class="hud-row">
+        <div class="hud-pill">
+          <span id="hudFilename" class="hud-filename">DarkCull Ready</span>
+          <span id="hudIndex" class="hud-index">0 / 0</span>
+          <span id="hudStarBadge" class="hud-badge badge-unrated">★ 0</span>
+        </div>
+
+        <div style="display: flex; gap: 8px; pointer-events: auto;">
+          <div class="hud-pill" style="gap: 6px;">
+            <span id="hudSyncBadge" class="hud-badge badge-synced">Synced</span>
+            <button id="hudSyncBtn" class="hud-btn" title="Sync Pending XMPs" style="display: none;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+            </button>
+          </div>
+
+          <button id="folderSelectBtn" class="hud-pill" title="Open Google Drive Folder" style="cursor: pointer;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>Drive</span>
+          </button>
+
+          <button id="localFolderBtn" class="hud-pill" title="Open Local Disk / SD Card Folder" style="cursor: pointer;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            <span>Local</span>
+          </button>
+
+          <button id="settingsBtn" class="hud-pill hud-btn" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Lower row: Live Tallies + Quick Filter Pills -->
+      <div class="hud-row tally-filter-row">
+        <div class="hud-pill tally-stats">
+          <span class="tally-item">Total: <strong id="tallyTotal">0</strong></span>
+          <span>•</span>
+          <span class="tally-item tally-star">★3+: <strong id="tally3Plus">0</strong></span>
+          <span>•</span>
+          <span class="tally-item tally-star">★4+: <strong id="tally4Plus">0</strong></span>
+          <span>•</span>
+          <span class="tally-item tally-star">★5: <strong id="tally5">0</strong></span>
+          <span>•</span>
+          <span class="tally-item tally-reject">✕: <strong id="tallyRejected">0</strong></span>
+        </div>
+
+        <div class="filter-group" style="pointer-events: auto;">
+          <button class="filter-pill active" data-filter="all">All</button>
+          <button class="filter-pill" data-filter="unrated">Unrated</button>
+          <button class="filter-pill" data-filter="3+">★3+</button>
+          <button class="filter-pill" data-filter="4+">★4+</button>
+          <button class="filter-pill" data-filter="5">★5</button>
+          <button class="filter-pill" data-filter="rejected">Rejected</button>
+        </div>
+      </div>
+
+      <!-- Cache Progress Bar (Visible during batch caching) -->
+      <div id="cacheProgressBar" class="cache-progress-container">
+        <div id="cacheProgressText" class="cache-progress-text">Caching JPEGs: 0 / 0</div>
+        <div class="progress-track">
+          <div id="cacheProgressFill" class="progress-fill"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Center Viewport -->
+    <main id="viewport" class="viewport-container">
+      <div id="loupeIndicator" class="loupe-indicator">100% 1:1 FOCUS CHECK</div>
+      <img id="mainImg" class="viewport-img" style="display: none;" alt="Photo" />
+      
+      <!-- Welcome / Empty Screen -->
+      <div id="emptyState" class="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg>
+        <h1>DarkCull</h1>
+        <p>Ultra-fast zero-latency photo culling PWA for darktable.<br/>Scrub photos offline, set ratings, and write non-destructive <code>.xmp</code> sidecars.</p>
+        <div class="empty-actions">
+          <button id="emptyOpenLocalBtn" class="btn-primary" onclick="window.darkCullApp.openLocalFolderPicker()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Open Local Folder / SD Card
+          </button>
+          <button id="emptyOpenDriveBtn" class="btn-secondary" onclick="window.darkCullApp.openFolderPickerModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            Connect Google Drive
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Persistent Bottom Thumb Dock -->
+    <footer class="bottom-dock">
+      <button id="btnPrev" class="dock-btn dock-nav-btn" title="Previous (A / Left Arrow)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+
+      <button id="btnReject" class="dock-btn btn-reject" title="Reject (X / Delete)">
+        ✕ Reject
+      </button>
+
+      <button id="btnRate0" class="dock-btn" title="Unrated (0)">
+        ★0
+      </button>
+
+      <button id="btnRate1" class="dock-btn btn-star" title="1 Star (1)" style="display: none;">★1</button>
+      <button id="btnRate2" class="dock-btn btn-star" title="2 Stars (2)" style="display: none;">★2</button>
+
+      <button id="btnRate3" class="dock-btn btn-star" title="3 Stars (3)">
+        ★3
+      </button>
+
+      <button id="btnRate4" class="dock-btn btn-star" title="4 Stars (4)">
+        ★4
+      </button>
+
+      <button id="btnRate5" class="dock-btn btn-star" title="5 Stars (5)">
+        ★5
+      </button>
+
+      <button id="btnNext" class="dock-btn dock-nav-btn" title="Next (D / Right Arrow)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal-overlay">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 class="modal-title">DarkCull Settings</h2>
+          <button id="closeSettingsBtn" class="modal-close">&times;</button>
+        </div>
+
+        <div class="form-group">
+          <label>Google Cloud OAuth Client ID</label>
+          <input type="text" id="clientIdInput" placeholder="xxxx.apps.googleusercontent.com" />
+          <span class="form-hint">Stored safely in your browser's local storage. Needed for Google Drive OAuth login.</span>
+          <button id="saveClientIdBtn" class="btn-secondary" style="margin-top: 6px; align-self: flex-start;">Save Client ID</button>
+        </div>
+
+        <div class="toggle-group">
+          <span>Auto-advance on rate</span>
+          <input type="checkbox" id="autoAdvanceToggle" checked style="width: 18px; height: 18px; cursor: pointer;" />
+        </div>
+
+        <div class="form-group">
+          <label>IndexedDB Local Shoot Cache</label>
+          <div id="storageQuotaText" class="form-hint" style="margin-bottom: 6px;">0 MB used</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button id="cacheEntireShootBtn" class="btn-primary" style="font-size: 13px;">
+              Cache Entire Shoot (6 Workers)
+            </button>
+            <button id="clearCacheBtn" class="btn-secondary" style="font-size: 13px; color: var(--reject-color);">
+              Clear Image Cache
+            </button>
+          </div>
+          <span class="form-hint">Downloading all JPEGs allows instant 0ms offline photo culling.</span>
+        </div>
+
+        <div class="form-group" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
+          <label>Keyboard Shortcuts</label>
+          <div class="form-hint" style="line-height: 1.8;">
+            <code>D</code> / <code>Right Arrow</code> / <code>J</code>: Next photo<br/>
+            <code>A</code> / <code>Left Arrow</code> / <code>K</code>: Previous photo<br/>
+            <code>1-5</code>: Rate photo & auto-advance<br/>
+            <code>0</code>: Clear rating<br/>
+            <code>X</code> / <code>Backspace</code>: Reject photo (-1)<br/>
+            <code>Space</code> / <code>Z</code>: Toggle 100% focus check zoom<br/>
+            <code>F</code>: Toggle Fullscreen
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Folder Picker Modal -->
+    <div id="folderModal" class="modal-overlay">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 class="modal-title">Select Google Drive Folder</h2>
+          <button id="closeFolderModalBtn" class="modal-close">&times;</button>
+        </div>
+
+        <div class="form-group">
+          <label>Paste Folder URL or ID</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="manualFolderInput" placeholder="https://drive.google.com/drive/folders/..." style="flex: 1;" />
+            <button id="loadManualFolderBtn" class="btn-primary">Open</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Or Choose From Recent Folders</label>
+          <div id="folderLoading" class="form-hint" style="display: none;">Scanning Google Drive folders...</div>
+          <div id="folderList" class="folder-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast-pill"></div>
+  </div>
+
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch((err) => {
+          console.warn('ServiceWorker registration failed:', err);
+        });
+      });
+    }
+  </script>
+
+  <!-- ES Modules Entrypoint -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
