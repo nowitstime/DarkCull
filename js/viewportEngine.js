@@ -14,6 +14,8 @@ export class ViewportEngine {
     this.container = options.container; // container element
     this.imgElement = options.imgElement; // main <img> tag
     this.loupeOverlay = options.loupeOverlay; // zoom overlay / loupe indicator if any
+    this.rawNotice = options.rawNotice || null; // fallback notice for RAW-only shots
+    this.rawNoticeFilename = options.rawNoticeFilename || null;
 
     this.photos = [];
     this.currentIndex = -1;
@@ -81,6 +83,22 @@ export class ViewportEngine {
       this.resetZoom();
     }
 
+    // Handle RAW-only shot (no companion JPEG to decode)
+    if (!currentPhoto.jpegFileId) {
+      this.imgElement.style.display = 'none';
+      if (this.rawNotice) {
+        this.rawNotice.style.display = 'flex';
+        if (this.rawNoticeFilename) {
+          this.rawNoticeFilename.textContent = currentPhoto.rawName || currentPhoto.stem;
+        }
+      }
+      this._setLoading(false);
+      return;
+    }
+
+    if (this.rawNotice) this.rawNotice.style.display = 'none';
+    this.imgElement.style.display = 'block';
+
     // 1. Check if already pre-decoded
     let item = this.preloaded.get(currentPhoto.id);
     if (item && item.url) {
@@ -97,6 +115,15 @@ export class ViewportEngine {
       item = this.preloaded.get(currentPhoto.id);
       if (item && item.url) {
         this.imgElement.src = item.url;
+      } else {
+        // Blob failed to load or download error
+        this.imgElement.style.display = 'none';
+        if (this.rawNotice) {
+          this.rawNotice.style.display = 'flex';
+          if (this.rawNoticeFilename) {
+            this.rawNoticeFilename.textContent = `${currentPhoto.jpegName || currentPhoto.stem} (Download error)`;
+          }
+        }
       }
       this._setLoading(false);
     }

@@ -3,7 +3,7 @@
  * Caches static app shell assets for offline use.
  */
 
-const CACHE_NAME = 'darkcull-shell-v3';
+const CACHE_NAME = 'darkcull-shell-v4';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const STATIC_ASSETS = [
   './js/viewportEngine.js',
   './js/xmpBuilder.js',
   './js/inputController.js',
+  './js/exifReader.js',
 ];
 
 self.addEventListener('install', (event) => {

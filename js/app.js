@@ -11,10 +11,14 @@ import { cacheStore } from './cacheStore.js';
 import { ViewportEngine } from './viewportEngine.js';
 import { InputController } from './inputController.js';
 import { XmpBuilder } from './xmpBuilder.js';
+import { ExifReader } from './exifReader.js';
 
 // RAW extensions recognized
-const RAW_EXTS = new Set(['RW2', 'ORF', 'DNG', 'ARW', 'CR2', 'CR3', 'NEF', 'RAF']);
-const JPEG_EXTS = new Set(['JPG', 'JPEG']);
+const RAW_EXTS = new Set([
+  'RW2', 'ORF', 'DNG', 'ARW', 'CR2', 'CR3', 'NEF', 'RAF',
+  'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
+]);
+const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
 
 class DarkCullApp {
   constructor() {
@@ -40,6 +44,8 @@ class DarkCullApp {
       hudFilename: document.getElementById('hudFilename'),
       hudIndex: document.getElementById('hudIndex'),
       hudStarBadge: document.getElementById('hudStarBadge'),
+      hudExifPill: document.getElementById('hudExifPill'),
+      exifText: document.getElementById('exifText'),
       hudSyncBadge: document.getElementById('hudSyncBadge'),
       hudSyncBtn: document.getElementById('hudSyncBtn'),
       cacheProgressBar: document.getElementById('cacheProgressBar'),
@@ -59,6 +65,8 @@ class DarkCullApp {
       viewport: document.getElementById('viewport'),
       mainImg: document.getElementById('mainImg'),
       emptyState: document.getElementById('emptyState'),
+      rawNotice: document.getElementById('rawNotice'),
+      rawNoticeFilename: document.getElementById('rawNoticeFilename'),
       loupeIndicator: document.getElementById('loupeIndicator'),
       swipeBadge: document.getElementById('swipeBadge'),
       loadingSpinner: document.getElementById('loadingSpinner'),
@@ -147,6 +155,8 @@ class DarkCullApp {
       container: this.dom.viewport,
       imgElement: this.dom.mainImg,
       loupeOverlay: this.dom.loupeIndicator,
+      rawNotice: this.dom.rawNotice,
+      rawNoticeFilename: this.dom.rawNoticeFilename,
       onLoadingChange: (isLoading) => {
         if (this.dom.loadingSpinner) this.dom.loadingSpinner.classList.toggle('visible', isLoading);
       },
@@ -421,8 +431,11 @@ class DarkCullApp {
     this._showProgress('Connecting to Google Drive…');
 
     try {
-      const files = await driveService.listFilesInFolder(folderId, (count) => {
-        if (token === this.loadToken) this._showProgress(`Scanning folder… ${count} files found`);
+      const files = await driveService.listFilesInFolder(folderId, (count, pageCount) => {
+        if (token === this.loadToken) {
+          const pageInfo = pageCount > 1 ? ` (Page ${pageCount})` : '';
+          this._showProgress(`Scanning folder… ${count} files found${pageInfo}`);
+        }
       });
       if (token !== this.loadToken) return;
 
@@ -435,7 +448,20 @@ class DarkCullApp {
       }
 
       await this._presentShoot(photos, folderId, folderName, 'gdrive');
-      this.showToast(`Loaded ${photos.length} photos — you can start culling now`);
+
+      let rawCount = 0;
+      let jpegCount = 0;
+      let xmpCount = 0;
+      for (const f of files) {
+        const lastDot = f.name.lastIndexOf('.');
+        if (lastDot === -1) continue;
+        const ext = f.name.substring(lastDot + 1).toUpperCase();
+        if (RAW_EXTS.has(ext)) rawCount++;
+        else if (JPEG_EXTS.has(ext)) jpegCount++;
+        else if (ext === 'XMP') xmpCount++;
+      }
+      const xmpText = xmpCount > 0 ? `, ${xmpCount} XMP` : '';
+      this.showToast(`Loaded ${photos.length} photos (${files.length} files: ${rawCount} RAW, ${jpegCount} JPEG${xmpText})`);
 
       // Background work: ratings + JPEG caching run in parallel
       this._loadXmpRatings(token);
@@ -593,11 +619,11 @@ class DarkCullApp {
     const stemMap = new Map();
 
     for (const f of files) {
-      const name = f.name;
+      const name = (f.name || '').trim();
       const lastDot = name.lastIndexOf('.');
       if (lastDot === -1) continue;
 
-      let stem = name.substring(0, lastDot);
+      let stem = name.substring(0, lastDot).trim();
       const ext = name.substring(lastDot + 1).toUpperCase();
 
       // Check for double extension: P1010234.RW2.xmp
@@ -607,7 +633,7 @@ class DarkCullApp {
         if (secondDot !== -1) {
           const rawSubExt = stem.substring(secondDot + 1).toUpperCase();
           if (RAW_EXTS.has(rawSubExt)) {
-            stem = stem.substring(0, secondDot);
+            stem = stem.substring(0, secondDot).trim();
           }
         }
       }
@@ -626,6 +652,49 @@ class DarkCullApp {
         entry.rawFile = f;
       } else if (JPEG_EXTS.has(ext)) {
         entry.jpegFile = f;
+      }
+    }
+
+    // Secondary pass: Pair unpaired RAW and JPEG files that share the exact numeric sequence
+    // (e.g. Panasonic/Olympus AdobeRGB "_1010234.ORF" and sRGB "P1010234.JPG", or Canon "_MG_1234" and "IMG_1234")
+    const unpairedRaws = [];
+    const unpairedJpegs = [];
+
+    for (const [key, entry] of stemMap.entries()) {
+      if (entry.rawFile && !entry.jpegFile) {
+        unpairedRaws.push({ key, entry });
+      } else if (!entry.rawFile && entry.jpegFile) {
+        unpairedJpegs.push({ key, entry });
+      }
+    }
+
+    if (unpairedRaws.length > 0 && unpairedJpegs.length > 0) {
+      const numMap = new Map();
+      for (const j of unpairedJpegs) {
+        const m = j.entry.stem.match(/(\d{3,})$/);
+        if (m) {
+          const num = m[1];
+          if (!numMap.has(num)) numMap.set(num, []);
+          numMap.get(num).push(j);
+        }
+      }
+
+      for (const r of unpairedRaws) {
+        const m = r.entry.stem.match(/(\d{3,})$/);
+        if (m) {
+          const num = m[1];
+          const candidates = numMap.get(num);
+          if (candidates && candidates.length === 1) {
+            const j = candidates[0];
+            // Merge companion JPEG into RAW entry
+            r.entry.jpegFile = j.entry.jpegFile;
+            if (j.entry.xmpFile && !r.entry.xmpFile) {
+              r.entry.xmpFile = j.entry.xmpFile;
+            }
+            stemMap.delete(j.key);
+            candidates.length = 0; // consumed
+          }
+        }
       }
     }
 
@@ -884,6 +953,7 @@ class DarkCullApp {
       this.dom.hudIndex.textContent = '0 / 0';
       this.dom.hudStarBadge.textContent = '★ -';
       this.dom.hudStarBadge.className = 'hud-badge badge-unrated';
+      if (this.dom.hudExifPill) this.dom.hudExifPill.style.display = 'none';
       return;
     }
 
@@ -932,7 +1002,57 @@ class DarkCullApp {
   renderCurrentPhoto() {
     if (this.currentIndex < 0 || this.currentIndex >= this.filteredPhotos.length) return;
     this.updateHud();
+    this.updateExifDisplay();
     this.viewportEngine.showPhoto(this.currentIndex);
+  }
+
+  async updateExifDisplay() {
+    const photo = this.filteredPhotos[this.currentIndex];
+    if (!photo) {
+      this._applyExifToDom(null);
+      return;
+    }
+
+    // 1. If already parsed and cached on photo object, display instantly (0ms)
+    if (photo.exif !== undefined) {
+      this._applyExifToDom(photo.exif);
+      return;
+    }
+
+    if (!photo.jpegFileId) {
+      photo.exif = null;
+      this._applyExifToDom(null);
+      return;
+    }
+
+    // 2. Asynchronously parse EXIF from the first 128KB of JPEG blob without blocking rendering
+    const curIdx = this.currentIndex;
+    try {
+      const blob = await this.fetchPhotoBlob(photo);
+      if (blob) {
+        const exif = await ExifReader.readFromBlob(blob);
+        photo.exif = exif || null;
+        if (this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
+          this._applyExifToDom(photo.exif);
+        }
+      } else {
+        photo.exif = null;
+        if (this.currentIndex === curIdx) this._applyExifToDom(null);
+      }
+    } catch (e) {
+      photo.exif = null;
+      if (this.currentIndex === curIdx) this._applyExifToDom(null);
+    }
+  }
+
+  _applyExifToDom(exif) {
+    if (!this.dom.hudExifPill || !this.dom.exifText) return;
+    if (exif && exif.formatted) {
+      this.dom.exifText.textContent = exif.formatted;
+      this.dom.hudExifPill.style.display = 'inline-flex';
+    } else {
+      this.dom.hudExifPill.style.display = 'none';
+    }
   }
 
   nextPhoto() {

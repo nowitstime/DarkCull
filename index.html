@@ -21,10 +21,17 @@
     <header class="top-hud">
       <!-- Upper row: File info + Status + Settings -->
       <div class="hud-row hud-top-row">
-        <div class="hud-pill hud-info-pill">
-          <span id="hudFilename" class="hud-filename">DarkCull Ready</span>
-          <span id="hudIndex" class="hud-index">0 / 0</span>
-          <span id="hudStarBadge" class="hud-badge badge-unrated">★ 0</span>
+        <div class="hud-left-group">
+          <div class="hud-pill hud-info-pill">
+            <span id="hudFilename" class="hud-filename">DarkCull Ready</span>
+            <span id="hudIndex" class="hud-index">0 / 0</span>
+            <span id="hudStarBadge" class="hud-badge badge-unrated">★ 0</span>
+          </div>
+
+          <div id="hudExifPill" class="hud-pill hud-exif-pill" style="display: none;" title="Camera Exposure Settings">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span id="exifText" class="exif-text"></span>
+          </div>
         </div>
 
         <div class="hud-actions">
@@ -93,6 +100,14 @@
       <div id="swipeBadge" class="swipe-badge"></div>
       <div id="loadingSpinner" class="loading-spinner" aria-label="Loading photo"></div>
       <img id="mainImg" class="viewport-img" style="display: none;" alt="" />
+
+      <!-- Notice shown when a file is RAW-only with no companion JPEG -->
+      <div id="rawNotice" class="raw-notice" style="display: none;">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span class="raw-notice-title">RAW File (No Companion JPEG)</span>
+        <span id="rawNoticeFilename" class="raw-notice-filename"></span>
+        <span class="raw-notice-desc">DarkCull requires a companion JPEG for instant 0ms scrubbing. You can still rate this photo and sync its <code>.xmp</code> sidecar.</span>
+      </div>
       
       <!-- Welcome / Empty Screen -->
       <div id="emptyState" class="empty-state">

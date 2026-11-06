@@ -204,13 +204,17 @@ export class DriveService {
     let pageToken = null;
     let pageCount = 0;
 
-    const query = `'${folderId}' in parents and trashed = false`;
+    const safeFolderId = String(folderId).replace(/'/g, "\\'");
+    const query = `'${safeFolderId}' in parents and trashed = false`;
 
     do {
       const url = new URL('https://www.googleapis.com/drive/v3/files');
       url.searchParams.set('q', query);
       url.searchParams.set('pageSize', '1000');
-      url.searchParams.set('fields', 'nextPageToken, files(id, name, mimeType, size, modifiedTime)');
+      // In Google API REST, fields list MUST NOT contain spaces after commas
+      url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,size,modifiedTime)');
+      url.searchParams.set('supportsAllDrives', 'true');
+      url.searchParams.set('includeItemsFromAllDrives', 'true');
       if (pageToken) {
         url.searchParams.set('pageToken', pageToken);
       }
@@ -224,11 +228,13 @@ export class DriveService {
       const data = await res.json();
       const files = data.files || [];
       allFiles = allFiles.concat(files);
-      pageToken = data.nextPageToken;
+      pageToken = data.nextPageToken ? String(data.nextPageToken) : null;
       pageCount++;
 
+      console.log(`[Drive] Page ${pageCount}: fetched ${files.length} items (total ${allFiles.length}). Continuation: ${pageToken ? 'YES' : 'END'}`);
+
       if (onProgress) {
-        onProgress(allFiles.length);
+        onProgress(allFiles.length, pageCount);
       }
     } while (pageToken);
 
