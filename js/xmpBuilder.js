@@ -21,38 +21,50 @@ export class XmpBuilder {
 
   /**
    * Parses xmp:Rating from an XMP string.
-   * Defaults to 0 if not present or cannot be parsed.
+   * Note: darktable writes xmp:Rating="1" by default on import when an image has not been rated
+   * in DarkCull (which uses -1 = Reject, 0 = Unrated, 3, 4, 5 = Stars).
+   * If forceExact is false, ratings of 1 or 2 without a DarkCull tag default to 0 (Unrated)
+   * unless explicitly set, or we can check if it's in { -1, 3, 4, 5 }.
    * @param {string} xmlString
    * @returns {number}
    */
   static parseRating(xmlString) {
     if (!xmlString) return 0;
 
+    let rawRating = 0;
+
     // Fast regex search for xmp:Rating="..." or Rating="..."
     const attrMatch = xmlString.match(/xmp:Rating\s*=\s*["'](-?\d+)["']/i);
     if (attrMatch) {
-      return parseInt(attrMatch[1], 10);
-    }
-
-    // Try tag format: <xmp:Rating>-1</xmp:Rating>
-    const tagMatch = xmlString.match(/<xmp:Rating>\s*(-?\d+)\s*<\/xmp:Rating>/i);
-    if (tagMatch) {
-      return parseInt(tagMatch[1], 10);
-    }
-
-    // Fallback using DOMParser if in browser
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xmlString, "application/xml");
-      const desc = doc.querySelector("Description");
-      if (desc && desc.hasAttribute("xmp:Rating")) {
-        return parseInt(desc.getAttribute("xmp:Rating"), 10);
+      rawRating = parseInt(attrMatch[1], 10);
+    } else {
+      // Try tag format: <xmp:Rating>-1</xmp:Rating>
+      const tagMatch = xmlString.match(/<xmp:Rating>\s*(-?\d+)\s*<\/xmp:Rating>/i);
+      if (tagMatch) {
+        rawRating = parseInt(tagMatch[1], 10);
+      } else {
+        // Fallback using DOMParser if in browser
+        try {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(xmlString, "application/xml");
+          const desc = doc.querySelector("Description");
+          if (desc && desc.hasAttribute("xmp:Rating")) {
+            rawRating = parseInt(desc.getAttribute("xmp:Rating"), 10);
+          }
+        } catch (e) {
+          console.warn("DOMParser failed to parse XMP rating:", e);
+        }
       }
-    } catch (e) {
-      console.warn("DOMParser failed to parse XMP rating:", e);
     }
 
-    return 0;
+    if (isNaN(rawRating)) return 0;
+    // Darktable initializes newly imported photos with xmp:Rating="1".
+    // Since DarkCull workflow uses Unrated (0), ★3, ★4, ★5, and Rejected (-1),
+    // treat 1 and 2 as Unrated (0) so existing darktable folders show up in "Unrated" properly.
+    if (rawRating === 1 || rawRating === 2) {
+      return 0;
+    }
+    return rawRating;
   }
 
   /**

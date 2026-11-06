@@ -23,7 +23,7 @@ class DarkCullApp {
     this.currentShoot = null; // { folderId, name, type: 'gdrive'|'local', count }
     this.allPhotos = []; // Logical PhotoItem array
     this.filteredPhotos = []; // Current view subset
-    this.activeFilter = 'all'; // 'all' | 'unrated' | '3+' | '4+' | '5' | 'rejected'
+    this.activeFilter = 'not-rejected'; // 'not-rejected' | 'unrated' | '3' | '4' | '5' | 'rejected' | 'all'
     this.currentIndex = 0;
     this.autoAdvance = true;
     this.isSyncing = false;
@@ -44,8 +44,9 @@ class DarkCullApp {
 
       // Tally & Filter
       tallyTotal: document.getElementById('tallyTotal'),
-      tally3Plus: document.getElementById('tally3Plus'),
-      tally4Plus: document.getElementById('tally4Plus'),
+      tallyUnrated: document.getElementById('tallyUnrated'),
+      tally3: document.getElementById('tally3'),
+      tally4: document.getElementById('tally4'),
       tally5: document.getElementById('tally5'),
       tallyRejected: document.getElementById('tallyRejected'),
       filterPills: document.querySelectorAll('.filter-pill'),
@@ -55,6 +56,7 @@ class DarkCullApp {
       mainImg: document.getElementById('mainImg'),
       emptyState: document.getElementById('emptyState'),
       loupeIndicator: document.getElementById('loupeIndicator'),
+      swipeBadge: document.getElementById('swipeBadge'),
 
       // Bottom Bar / Thumb Dock
       btnReject: document.getElementById('btnReject'),
@@ -147,6 +149,9 @@ class DarkCullApp {
   _initInputController() {
     this.inputController = new InputController({
       touchContainer: this.dom.viewport,
+      imgElement: this.dom.mainImg,
+      swipeBadge: this.dom.swipeBadge,
+      isZoomedFn: () => this.viewportEngine.isZoomed,
       onNext: () => this.nextPhoto(),
       onPrev: () => this.prevPhoto(),
       onRate: (rating) => this.setRating(rating),
@@ -455,8 +460,14 @@ class DarkCullApp {
     this.mode = shoot.type || 'gdrive';
     const photos = await cacheStore.getPhotosByFolder(shoot.folderId);
     if (photos && photos.length > 0) {
+      // Normalize any legacy darktable default 1 or 2 ratings to 0 (Unrated)
+      for (const p of photos) {
+        if (p.rating === 1 || p.rating === 2) {
+          p.rating = 0;
+        }
+      }
       this.allPhotos = photos;
-      this.setFilter('all');
+      this.setFilter(this.activeFilter || 'not-rejected');
       this.showToast(`Restored shoot: ${shoot.name} (${photos.length} photos)`);
     }
   }
@@ -670,24 +681,26 @@ class DarkCullApp {
 
   setFilter(filterType) {
     this.activeFilter = filterType;
-    this._applyFilter();
+    this.dom.filterPills.forEach((p) => {
+      p.classList.toggle('active', p.dataset.filter === filterType);
+    });
+    this._applyFilter(true);
     this.updateTallies();
   }
 
-  _applyFilter() {
-    if (this.activeFilter === 'all') {
-      this.filteredPhotos = [...this.allPhotos];
-    } else if (this.activeFilter === 'unrated') {
-      this.filteredPhotos = this.allPhotos.filter((p) => p.rating === 0);
-    } else if (this.activeFilter === '3+') {
-      this.filteredPhotos = this.allPhotos.filter((p) => p.rating >= 3);
-    } else if (this.activeFilter === '4+') {
-      this.filteredPhotos = this.allPhotos.filter((p) => p.rating >= 4);
-    } else if (this.activeFilter === '5') {
-      this.filteredPhotos = this.allPhotos.filter((p) => p.rating === 5);
-    } else if (this.activeFilter === 'rejected') {
-      this.filteredPhotos = this.allPhotos.filter((p) => p.rating === -1);
-    }
+  _matchesActiveFilter(photo) {
+    const r = photo.rating || 0;
+    if (this.activeFilter === 'not-rejected') return r !== -1;
+    if (this.activeFilter === 'unrated') return r === 0 || r === 1 || r === 2;
+    if (this.activeFilter === '3') return r === 3;
+    if (this.activeFilter === '4') return r === 4;
+    if (this.activeFilter === '5') return r === 5;
+    if (this.activeFilter === 'rejected') return r === -1;
+    return true; // 'all'
+  }
+
+  _applyFilter(resetIndex = true) {
+    this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
 
     this.viewportEngine.setPhotos(this.filteredPhotos);
 
@@ -699,38 +712,42 @@ class DarkCullApp {
     } else {
       this.dom.emptyState.style.display = 'none';
       this.dom.mainImg.style.display = 'block';
-      this.currentIndex = 0;
+      if (resetIndex) {
+        this.currentIndex = 0;
+      } else {
+        this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.filteredPhotos.length - 1));
+      }
       this.renderCurrentPhoto();
     }
   }
 
   updateTallies() {
     let unrated = 0;
-    let r3Plus = 0;
-    let r4Plus = 0;
+    let r3 = 0;
+    let r4 = 0;
     let r5 = 0;
     let rejected = 0;
 
     for (const p of this.allPhotos) {
-      if (p.rating === 0) unrated++;
-      else if (p.rating === -1) rejected++;
-      else {
-        if (p.rating >= 3) r3Plus++;
-        if (p.rating >= 4) r4Plus++;
-        if (p.rating === 5) r5++;
-      }
+      const r = p.rating || 0;
+      if (r === -1) rejected++;
+      else if (r === 3) r3++;
+      else if (r === 4) r4++;
+      else if (r === 5) r5++;
+      else unrated++;
     }
 
-    this.dom.tallyTotal.textContent = this.allPhotos.length;
-    this.dom.tally3Plus.textContent = r3Plus;
-    this.dom.tally4Plus.textContent = r4Plus;
-    this.dom.tally5.textContent = r5;
-    this.dom.tallyRejected.textContent = rejected;
+    if (this.dom.tallyTotal) this.dom.tallyTotal.textContent = this.allPhotos.length;
+    if (this.dom.tallyUnrated) this.dom.tallyUnrated.textContent = unrated;
+    if (this.dom.tally3) this.dom.tally3.textContent = r3;
+    if (this.dom.tally4) this.dom.tally4.textContent = r4;
+    if (this.dom.tally5) this.dom.tally5.textContent = r5;
+    if (this.dom.tallyRejected) this.dom.tallyRejected.textContent = rejected;
   }
 
   updateHud() {
     if (this.currentIndex < 0 || this.filteredPhotos.length === 0) {
-      this.dom.hudFilename.textContent = 'No photos';
+      this.dom.hudFilename.textContent = this.allPhotos.length > 0 ? `No photos in filter` : 'No photos';
       this.dom.hudIndex.textContent = '0 / 0';
       this.dom.hudStarBadge.textContent = '★ -';
       this.dom.hudStarBadge.className = 'hud-badge badge-unrated';
@@ -747,7 +764,7 @@ class DarkCullApp {
     if (photo.rating === -1) {
       badge.textContent = '✕ REJECTED';
       badge.className = 'hud-badge badge-reject';
-    } else if (photo.rating === 0) {
+    } else if (!photo.rating || photo.rating === 0) {
       badge.textContent = '★ 0';
       badge.className = 'hud-badge badge-unrated';
     } else {
@@ -771,7 +788,7 @@ class DarkCullApp {
 
     if (photo.rating === -1) {
       this.dom.btnReject.classList.add('btn-active');
-    } else if (photo.rating === 0) {
+    } else if (!photo.rating || photo.rating === 0) {
       this.dom.btnRate0.classList.add('btn-active');
     } else {
       const btn = this.dom[`btnRate${photo.rating}`];
@@ -814,7 +831,6 @@ class DarkCullApp {
     // 1. Instantly update UI and memory (<16ms)
     photo.rating = rating;
     photo.syncStatus = 'dirty';
-    this.updateHud();
     this.updateTallies();
 
     // 2. Persist to IndexedDB
@@ -833,9 +849,16 @@ class DarkCullApp {
     await cacheStore.enqueueSyncItem(syncItem);
     this.updateSyncBadge();
 
-    // 4. Advance to next photo if auto-advance is on
-    if (this.autoAdvance) {
-      this.nextPhoto();
+    // 4. Check if photo still matches the active filter
+    const stillMatches = this._matchesActiveFilter(photo);
+    if (!stillMatches) {
+      // Remove from current filtered view and keep currentIndex pointing at the next item
+      this._applyFilter(false);
+    } else {
+      this.updateHud();
+      if (this.autoAdvance) {
+        this.nextPhoto();
+      }
     }
 
     // 5. Trigger background sync processor non-blockingly

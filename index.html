@@ -20,33 +20,33 @@
     <!-- Top HUD Bar -->
     <header class="top-hud">
       <!-- Upper row: File info + Status + Settings -->
-      <div class="hud-row">
-        <div class="hud-pill">
+      <div class="hud-row hud-top-row">
+        <div class="hud-pill hud-info-pill">
           <span id="hudFilename" class="hud-filename">DarkCull Ready</span>
           <span id="hudIndex" class="hud-index">0 / 0</span>
           <span id="hudStarBadge" class="hud-badge badge-unrated">★ 0</span>
         </div>
 
-        <div style="display: flex; gap: 8px; pointer-events: auto;">
-          <div class="hud-pill" style="gap: 6px;">
+        <div class="hud-actions">
+          <div class="hud-pill hud-sync-pill">
             <span id="hudSyncBadge" class="hud-badge badge-synced">Synced</span>
             <button id="hudSyncBtn" class="hud-btn" title="Sync Pending XMPs" style="display: none;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
             </button>
           </div>
 
-          <button id="folderSelectBtn" class="hud-pill" title="Open Google Drive Folder" style="cursor: pointer;">
+          <button id="folderSelectBtn" class="hud-pill hud-action-btn" title="Open Google Drive Folder">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            <span>Drive</span>
+            <span class="btn-label">Drive</span>
           </button>
 
-          <button id="localFolderBtn" class="hud-pill" title="Open Local Disk / SD Card Folder" style="cursor: pointer;">
+          <button id="localFolderBtn" class="hud-pill hud-action-btn" title="Open Local Disk / SD Card Folder">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-            <span>Local</span>
+            <span class="btn-label">Local</span>
           </button>
 
-          <button id="settingsBtn" class="hud-pill hud-btn" title="Settings">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <button id="settingsBtn" class="hud-pill hud-btn hud-action-btn" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </div>
@@ -54,11 +54,13 @@
       <!-- Lower row: Live Tallies + Quick Filter Pills -->
       <div class="hud-row tally-filter-row">
         <div class="hud-pill tally-stats">
-          <span class="tally-item">Total: <strong id="tallyTotal">0</strong></span>
+          <span class="tally-item">All: <strong id="tallyTotal">0</strong></span>
           <span>•</span>
-          <span class="tally-item tally-star">★3+: <strong id="tally3Plus">0</strong></span>
+          <span class="tally-item">Unrated: <strong id="tallyUnrated">0</strong></span>
           <span>•</span>
-          <span class="tally-item tally-star">★4+: <strong id="tally4Plus">0</strong></span>
+          <span class="tally-item tally-star">★3: <strong id="tally3">0</strong></span>
+          <span>•</span>
+          <span class="tally-item tally-star">★4: <strong id="tally4">0</strong></span>
           <span>•</span>
           <span class="tally-item tally-star">★5: <strong id="tally5">0</strong></span>
           <span>•</span>
@@ -66,12 +68,13 @@
         </div>
 
         <div class="filter-group" style="pointer-events: auto;">
-          <button class="filter-pill active" data-filter="all">All</button>
-          <button class="filter-pill" data-filter="unrated">Unrated</button>
-          <button class="filter-pill" data-filter="3+">★3+</button>
-          <button class="filter-pill" data-filter="4+">★4+</button>
-          <button class="filter-pill" data-filter="5">★5</button>
-          <button class="filter-pill" data-filter="rejected">Rejected</button>
+          <button class="filter-pill active" data-filter="not-rejected" title="Unrated & Rated (Excludes Rejected)">Not Rejected</button>
+          <button class="filter-pill" data-filter="unrated" title="Unrated Photos Only">Unrated</button>
+          <button class="filter-pill" data-filter="3" title="3 Stars">★3</button>
+          <button class="filter-pill" data-filter="4" title="4 Stars">★4</button>
+          <button class="filter-pill" data-filter="5" title="5 Stars">★5</button>
+          <button class="filter-pill" data-filter="rejected" title="Rejected Photos">Rejected</button>
+          <button class="filter-pill" data-filter="all" title="Every Photo Including Rejected">All</button>
         </div>
       </div>
 
@@ -87,6 +90,7 @@
     <!-- Center Viewport -->
     <main id="viewport" class="viewport-container">
       <div id="loupeIndicator" class="loupe-indicator">100% 1:1 FOCUS CHECK</div>
+      <div id="swipeBadge" class="swipe-badge"></div>
       <img id="mainImg" class="viewport-img" style="display: none;" alt="Photo" />
       
       <!-- Welcome / Empty Screen -->

@@ -154,14 +154,25 @@ export class ViewportEngine {
   _setupLoupeEvents() {
     if (!this.container || !this.imgElement) return;
 
-    // Pointer events for smooth desktop drag + mobile drag
+    // Pointer events for smooth desktop drag + mobile drag when zoomed
     this.container.addEventListener('pointerdown', (e) => this._onPointerDown(e));
     window.addEventListener('pointermove', (e) => this._onPointerMove(e));
     window.addEventListener('pointerup', (e) => this._onPointerUp(e));
     window.addEventListener('pointercancel', (e) => this._onPointerUp(e));
 
-    // Double click / tap toggle
+    // Track last touch time so desktop dblclick doesn't double-fire after mobile double-tap
+    this._lastTouchTime = 0;
+    this.container.addEventListener(
+      'touchend',
+      () => {
+        this._lastTouchTime = Date.now();
+      },
+      { passive: true }
+    );
+
+    // Desktop double click toggle
     this.container.addEventListener('dblclick', (e) => {
+      if (Date.now() - this._lastTouchTime < 500) return;
       e.preventDefault();
       this.toggleZoom(e.clientX, e.clientY);
     });
@@ -176,23 +187,22 @@ export class ViewportEngine {
   }
 
   zoomTo100(originX = null, originY = null) {
-    if (!this.imgElement.naturalWidth || !this.imgElement.naturalHeight) return;
+    const natW = this.imgElement.naturalWidth || this.imgElement.width;
+    const natH = this.imgElement.naturalHeight || this.imgElement.height;
+    if (!natW || !natH) return;
 
     const rect = this.container.getBoundingClientRect();
     const clickX = originX !== null ? originX - rect.left : rect.width / 2;
     const clickY = originY !== null ? originY - rect.top : rect.height / 2;
 
     // Calculate native scale factor to reach true 100% 1:1 image pixels
-    const fitScale = Math.min(
-      rect.width / this.imgElement.naturalWidth,
-      rect.height / this.imgElement.naturalHeight
-    );
+    const fitScale = Math.min(rect.width / natW, rect.height / natH);
 
-    // 100% zoom factor relative to the fit-contained image
+    // 100% zoom factor relative to the fit-contained image (at least 2.5x on mobile screens)
     const fullScale = 1 / fitScale;
-    this.zoomScale = Math.max(fullScale, 2.0); // At least 2x or 1:1
+    this.zoomScale = Math.max(fullScale, 2.5);
 
-    // Center zoom directly on clicked coordinate
+    // Center zoom directly on tapped/clicked coordinate
     const imgCenterX = rect.width / 2;
     const imgCenterY = rect.height / 2;
 
@@ -200,6 +210,7 @@ export class ViewportEngine {
     this.panY = (imgCenterY - clickY) * (this.zoomScale - 1);
 
     this.isZoomed = true;
+    this.imgElement.style.transition = 'transform 0.15s ease-out';
     this._applyTransform();
 
     if (this.loupeOverlay) {
@@ -212,6 +223,7 @@ export class ViewportEngine {
     this.zoomScale = 1;
     this.panX = 0;
     this.panY = 0;
+    this.imgElement.style.transition = 'transform 0.15s ease-out';
     this._applyTransform();
 
     if (this.loupeOverlay) {
@@ -222,10 +234,12 @@ export class ViewportEngine {
   _applyTransform() {
     if (!this.isZoomed) {
       this.imgElement.style.transform = 'none';
+      this.imgElement.style.opacity = '1';
       this.imgElement.style.cursor = 'zoom-in';
       this.container.classList.remove('is-zoomed');
     } else {
-      this.imgElement.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoomScale})`;
+      this.imgElement.style.transform = `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.zoomScale})`;
+      this.imgElement.style.opacity = '1';
       this.imgElement.style.cursor = 'grab';
       this.container.classList.add('is-zoomed');
     }
@@ -236,8 +250,9 @@ export class ViewportEngine {
     this.isDragging = true;
     this.startX = e.clientX - this.panX;
     this.startY = e.clientY - this.panY;
+    this.imgElement.style.transition = 'none';
     this.imgElement.style.cursor = 'grabbing';
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
   }
 
   _onPointerMove(e) {
