@@ -89,9 +89,10 @@ class DarkCullApp {
       swipeBadge: document.getElementById('swipeBadge'),
       loadingSpinner: document.getElementById('loadingSpinner'),
 
-      // Bottom Bar / Thumb Dock (Prev / Next Navigation Arrows)
+      // Bottom Bar / Thumb Dock (Prev / Status Pill / Next Navigation Arrows)
       bottomDock: document.getElementById('bottomDock'),
       btnPrev: document.getElementById('btnPrev'),
+      dockStatusPill: document.getElementById('dockStatusPill'),
       btnNext: document.getElementById('btnNext'),
 
       // Settings & Modals
@@ -1179,6 +1180,10 @@ class DarkCullApp {
       this.dom.hudIndex.textContent = '0 / 0';
       this.dom.hudStarBadge.textContent = '★ -';
       this.dom.hudStarBadge.className = 'hud-badge badge-unrated';
+      if (this.dom.dockStatusPill) {
+        this.dom.dockStatusPill.textContent = 'No Photo';
+        this.dom.dockStatusPill.className = 'dock-status-pill status-unrated';
+      }
       if (this.dom.hudExifPill) this.dom.hudExifPill.style.display = 'none';
       return;
     }
@@ -1188,17 +1193,30 @@ class DarkCullApp {
     this.dom.hudFilename.textContent = `${photo.jpegName || photo.stem}${rawTag}`;
     this.dom.hudIndex.textContent = `${this.currentIndex + 1} / ${this.filteredPhotos.length}`;
 
-    // Update rating badge
+    // Update top HUD rating badge and bottom dock status pill
     const badge = this.dom.hudStarBadge;
+    const dockPill = this.dom.dockStatusPill;
     if (photo.rating === -1) {
       badge.textContent = '✕ REJECTED';
       badge.className = 'hud-badge badge-reject';
+      if (dockPill) {
+        dockPill.textContent = '✕ Rejected';
+        dockPill.className = 'dock-status-pill status-reject';
+      }
     } else if (!photo.rating || photo.rating === 0) {
       badge.textContent = '★ 0';
       badge.className = 'hud-badge badge-unrated';
+      if (dockPill) {
+        dockPill.textContent = 'Unrated';
+        dockPill.className = 'dock-status-pill status-unrated';
+      }
     } else {
       badge.textContent = `★ ${photo.rating}`;
       badge.className = `hud-badge badge-rated rate-${photo.rating}`;
+      if (dockPill) {
+        dockPill.textContent = photo.rating === 1 ? '★ 1 Star' : `★ ${photo.rating} Stars`;
+        dockPill.className = `dock-status-pill status-rated rate-${photo.rating}`;
+      }
     }
   }
 
