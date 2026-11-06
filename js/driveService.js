@@ -102,25 +102,65 @@ export class DriveService {
   }
 
   /**
-   * Helper to perform authenticated fetch to Google APIs
+   * Shared-promise wrapper so many parallel requests that hit an expired token
+   * only trigger ONE Google sign-in popup instead of one per request.
+   */
+  _authenticateOnce() {
+    if (!this._authPromise) {
+      this._authPromise = this.authenticate().finally(() => {
+        this._authPromise = null;
+      });
+    }
+    return this._authPromise;
+  }
+
+  /**
+   * Helper to perform authenticated fetch to Google APIs.
+   * - Re-authenticates once on 401 (single shared popup)
+   * - Retries 429 / 5xx and network errors with exponential backoff
    */
   async _authFetch(url, options = {}) {
     if (!this.isAuthenticated()) {
-      await this.authenticate();
+      await this._authenticateOnce();
     }
 
-    const headers = new Headers(options.headers || {});
-    headers.set('Authorization', `Bearer ${this.accessToken}`);
+    const MAX_ATTEMPTS = 4;
+    let reauthed = false;
 
-    const response = await fetch(url, { ...options, headers });
-    if (response.status === 401) {
-      // Token might be expired, re-auth once
-      this.accessToken = null;
-      await this.authenticate();
+    for (let attempt = 1; ; attempt++) {
+      const headers = new Headers(options.headers || {});
       headers.set('Authorization', `Bearer ${this.accessToken}`);
-      return await fetch(url, { ...options, headers });
+
+      let response;
+      try {
+        response = await fetch(url, { ...options, headers });
+      } catch (netErr) {
+        if (attempt >= MAX_ATTEMPTS) throw netErr;
+        await new Promise((r) => setTimeout(r, 400 * 2 ** (attempt - 1)));
+        continue;
+      }
+
+      if (response.status === 401 && !reauthed) {
+        reauthed = true;
+        if (this.getManualToken()) {
+          // A pasted token can't be refreshed automatically
+          throw new Error('Your pasted access token has expired. Paste a new one in Settings (or use a Client ID).');
+        }
+        this.accessToken = null;
+        this.tokenExpiresAt = 0;
+        await this._authenticateOnce();
+        continue;
+      }
+
+      const retryable = response.status === 429 || response.status >= 500 ||
+        (response.status === 403 && attempt < MAX_ATTEMPTS && /rate|quota/i.test(response.statusText || ''));
+      if (retryable && attempt < MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1) + Math.random() * 250));
+        continue;
+      }
+
+      return response;
     }
-    return response;
   }
 
   /**

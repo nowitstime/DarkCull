@@ -165,6 +165,17 @@ export class CacheStore {
     });
   }
 
+  /** All cached blob keys in ONE request (fast even for 2000+ photos). */
+  async getBlobKeys() {
+    const db = await this._ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('blobs', 'readonly');
+      const req = tx.objectStore('blobs').getAllKeys();
+      req.onsuccess = () => resolve(new Set(req.result || []));
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   // --- XMPs ---
   async saveXmpContent(key, content) {
     const db = await this._ensureDb();
@@ -204,6 +215,16 @@ export class CacheStore {
       const store = tx.objectStore('syncQueue');
       const req = folderId ? store.index('folderId').getAll(folderId) : store.getAll();
       req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getSyncItem(id) {
+    const db = await this._ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('syncQueue', 'readonly');
+      const req = tx.objectStore('syncQueue').get(id);
+      req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
   }

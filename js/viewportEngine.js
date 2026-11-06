@@ -18,6 +18,9 @@ export class ViewportEngine {
     this.photos = [];
     this.currentIndex = -1;
     this.getBlobFn = options.getBlobFn || null; // async (photo) => Blob
+    this.onLoadingChange = options.onLoadingChange || null; // (isLoading) => void
+    this._showRequestId = 0;
+    this._pendingLoads = new Map(); // photo.id -> Promise (one in-flight load per photo)
 
     // Window size settings
     this.windowBefore = 3;
@@ -39,8 +42,15 @@ export class ViewportEngine {
   }
 
   setPhotos(photos) {
+    // Cache is keyed by photo.id, so decoded images stay valid across filter changes.
+    // Out-of-window entries get evicted by _updateSlidingWindow().
     this.photos = photos;
-    this.clearCache();
+  }
+
+  /** Re-sync the sliding window after the list changed but the same photo is still on screen. */
+  reindex(index) {
+    this.currentIndex = index;
+    this._updateSlidingWindow();
   }
 
   clearCache() {
@@ -52,6 +62,10 @@ export class ViewportEngine {
     this.preloaded.clear();
   }
 
+  _setLoading(isLoading) {
+    if (this.onLoadingChange) this.onLoadingChange(isLoading);
+  }
+
   /**
    * Switches active photo display with 0ms pre-decoded latency.
    * @param {number} index
@@ -60,6 +74,7 @@ export class ViewportEngine {
     if (index < 0 || index >= this.photos.length) return;
     this.currentIndex = index;
     const currentPhoto = this.photos[index];
+    const requestId = ++this._showRequestId;
 
     // Reset zoom state on photo change
     if (this.isZoomed) {
@@ -70,25 +85,39 @@ export class ViewportEngine {
     let item = this.preloaded.get(currentPhoto.id);
     if (item && item.url) {
       this.imgElement.src = item.url;
+      this._setLoading(false);
     } else {
-      // Load current immediately
+      // Not ready (still downloading / decoding): show spinner, keep old image until it arrives
+      this._setLoading(true);
       await this._loadItem(currentPhoto);
+
+      // The user may have moved on while we waited - never paint a stale photo
+      if (requestId !== this._showRequestId) return;
+
       item = this.preloaded.get(currentPhoto.id);
       if (item && item.url) {
         this.imgElement.src = item.url;
       }
+      this._setLoading(false);
     }
 
     // 2. Trigger sliding window pre-decoding in the background
     this._updateSlidingWindow();
   }
 
-  async _loadItem(photo) {
-    if (!photo || this.preloaded.has(photo.id)) return;
+  _loadItem(photo) {
+    if (!photo || this.preloaded.has(photo.id)) return Promise.resolve();
+    if (this._pendingLoads.has(photo.id)) return this._pendingLoads.get(photo.id);
 
+    const promise = this._doLoadItem(photo).finally(() => this._pendingLoads.delete(photo.id));
+    this._pendingLoads.set(photo.id, promise);
+    return promise;
+  }
+
+  async _doLoadItem(photo) {
     try {
       const blob = await this.getBlobFn(photo);
-      if (!blob) return;
+      if (!blob || this.preloaded.has(photo.id)) return;
 
       const url = URL.createObjectURL(blob);
       const img = new Image();

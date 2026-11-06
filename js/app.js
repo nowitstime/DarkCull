@@ -27,7 +27,11 @@ class DarkCullApp {
     this.currentIndex = 0;
     this.autoAdvance = true;
     this.isSyncing = false;
-    this.isCaching = false;
+    this.loadToken = 0; // bumped on every folder load; background workers stop when it changes
+    this._cachingToken = null;
+    this.inflight = new Map(); // jpegFileId -> Promise<Blob> (dedupes viewer vs. background downloads)
+    this.xmpSources = new Map(); // photo.id -> xmp file record (local mode)
+    this.localFiles = new Map(); // jpegFileId -> File (local mode, in-memory)
     this.localDirHandle = null; // Used in local mode
 
     // Elements
@@ -57,6 +61,7 @@ class DarkCullApp {
       emptyState: document.getElementById('emptyState'),
       loupeIndicator: document.getElementById('loupeIndicator'),
       swipeBadge: document.getElementById('swipeBadge'),
+      loadingSpinner: document.getElementById('loadingSpinner'),
 
       // Bottom Bar / Thumb Dock
       btnReject: document.getElementById('btnReject'),
@@ -104,7 +109,6 @@ class DarkCullApp {
     this._initViewportEngine();
     this._initInputController();
     this._bindEvents();
-    this._checkOfflineQueue();
     await this._updateStorageStatus();
 
     // Check for last opened shoot in localStorage
@@ -112,9 +116,12 @@ class DarkCullApp {
     if (lastFolderId) {
       const shoot = await cacheStore.getShoot(lastFolderId);
       if (shoot) {
-        this.loadShootFromCache(shoot);
+        await this.loadShootFromCache(shoot);
       }
     }
+
+    // Only flush AFTER the shoot is restored so live photo records (with xmpFileId) are available
+    this._checkOfflineQueue();
   }
 
   _initSettings() {
@@ -140,6 +147,9 @@ class DarkCullApp {
       container: this.dom.viewport,
       imgElement: this.dom.mainImg,
       loupeOverlay: this.dom.loupeIndicator,
+      onLoadingChange: (isLoading) => {
+        if (this.dom.loadingSpinner) this.dom.loadingSpinner.classList.toggle('visible', isLoading);
+      },
       getBlobFn: async (photo) => {
         return await this.fetchPhotoBlob(photo);
       },
@@ -230,6 +240,7 @@ class DarkCullApp {
       if (confirm('Clear all downloaded JPEG blobs from local cache? Ratings will remain intact.')) {
         await cacheStore.clearAllBlobs();
         this.viewportEngine.clearCache();
+        this._cachingToken = null;
         await this._updateStorageStatus();
         this.showToast('Local image cache cleared.');
       }
@@ -340,46 +351,98 @@ class DarkCullApp {
     }
   }
 
+  // --- Progress bar helpers (pct === null -> indeterminate animation) ---
+
+  _showProgress(text, pct = null) {
+    clearTimeout(this._progressHideTimer);
+    const { cacheProgressBar: bar, cacheProgressText: txt, cacheProgressFill: fill } = this.dom;
+    bar.style.display = 'flex';
+    txt.textContent = text;
+    fill.classList.toggle('indeterminate', pct === null);
+    if (pct !== null) fill.style.width = `${pct}%`;
+  }
+
+  _hideProgress(delay = 0) {
+    clearTimeout(this._progressHideTimer);
+    this._progressHideTimer = setTimeout(() => {
+      this.dom.cacheProgressBar.style.display = 'none';
+    }, delay);
+  }
+
   /**
-   * Scans a Google Drive folder, performs Stem Pairing, downloads existing XMPs for ratings,
-   * and saves manifest to IndexedDB.
+   * Carry over unsynced local ratings and known XMP file IDs from a previous visit,
+   * so re-opening a folder never loses work or creates duplicate .xmp files.
+   */
+  async _mergeWithSavedState(photos, folderId) {
+    const [saved, pending] = await Promise.all([
+      cacheStore.getPhotosByFolder(folderId),
+      cacheStore.getPendingSyncItems(folderId),
+    ]);
+    const savedById = new Map(saved.map((p) => [p.id, p]));
+    const dirtyIds = new Set(pending.map((i) => i.id));
+
+    for (const p of photos) {
+      const s = savedById.get(p.id);
+      if (!s) continue;
+      if (!p.xmpFileId && s.xmpFileId) p.xmpFileId = s.xmpFileId;
+      if (dirtyIds.has(p.id)) {
+        p.rating = s.rating;
+        p.syncStatus = 'dirty';
+        p.ratingLoaded = true;
+        p.userRated = true;
+      }
+    }
+  }
+
+  /** Common "folder is indexed, show it now" step shared by Drive and Local modes. */
+  async _presentShoot(photos, folderId, folderName, type) {
+    await this._mergeWithSavedState(photos, folderId);
+
+    this.currentShoot = { folderId, name: folderName, type, count: photos.length, updatedAt: Date.now() };
+    this.allPhotos = photos;
+    this.setFilter(this.activeFilter);
+    localStorage.setItem('darkcull_last_folder_id', folderId);
+
+    // Persist in the background - never block the first photo on IndexedDB writes
+    cacheStore.saveShoot(this.currentShoot).catch(console.warn);
+    cacheStore.savePhotos(photos).catch(console.warn);
+  }
+
+  /**
+   * Scans a Google Drive folder and shows the first photo as soon as the file LIST is indexed.
+   * Ratings (tiny .xmp files) and JPEG downloads continue in the background.
    */
   async loadGoogleDriveFolder(folderId, folderName = 'Drive Folder') {
     this.mode = 'gdrive';
-    this.showToast(`Scanning Google Drive folder: ${folderName}...`);
+    const token = ++this.loadToken; // cancels any previous load's background work
+    this.inflight.clear();
+    this.xmpSources.clear();
+
+    this._showProgress('Connecting to Google Drive…');
 
     try {
       const files = await driveService.listFilesInFolder(folderId, (count) => {
-        this.dom.cacheProgressText.textContent = `Indexed ${count} files...`;
+        if (token === this.loadToken) this._showProgress(`Scanning folder… ${count} files found`);
       });
+      if (token !== this.loadToken) return;
 
-      const photos = await this._pairFilesIntoPhotos(files, folderId, 'gdrive');
+      this._showProgress(`Pairing ${files.length} files…`);
+      const photos = this._pairFilesIntoPhotos(files, folderId);
       if (photos.length === 0) {
+        this._hideProgress();
         this.showToast('No photo pairs (.JPG / RAW) found in folder.');
         return;
       }
 
-      this.currentShoot = {
-        folderId,
-        name: folderName,
-        type: 'gdrive',
-        count: photos.length,
-        updatedAt: Date.now(),
-      };
+      await this._presentShoot(photos, folderId, folderName, 'gdrive');
+      this.showToast(`Loaded ${photos.length} photos — you can start culling now`);
 
-      await cacheStore.saveShoot(this.currentShoot);
-      await cacheStore.savePhotos(photos);
-      localStorage.setItem('darkcull_last_folder_id', folderId);
-
-      this.allPhotos = photos;
-      this.setFilter(this.activeFilter);
-      this.showToast(`Loaded ${photos.length} photo pairs!`);
-
-      // Ask to cache shoot
-      this.dom.cacheProgressBar.style.display = 'flex';
+      // Background work: ratings + JPEG caching run in parallel
+      this._loadXmpRatings(token);
       this.cacheEntireShoot();
     } catch (err) {
       console.error(err);
+      this._hideProgress();
       this.showToast(`Folder load error: ${err.message}`);
     }
   }
@@ -394,65 +457,113 @@ class DarkCullApp {
     }
 
     try {
-      const dirHandle = await window.showDirectoryPicker();
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const token = ++this.loadToken;
       this.localDirHandle = dirHandle;
       this.mode = 'local';
+      this.inflight.clear();
+      this.xmpSources.clear();
+      this.localFiles.clear();
+
       const folderId = `local_${dirHandle.name}`;
       const folderName = dirHandle.name;
 
-      this.showToast(`Reading local folder "${folderName}"...`);
+      this._showProgress(`Reading "${folderName}"…`);
 
       const files = [];
       for await (const [name, handle] of dirHandle.entries()) {
         if (handle.kind === 'file') {
           const file = await handle.getFile();
           files.push({
-            id: name, // filename as unique ID in local mode
-            name: name,
+            // Namespaced by folder so identical filenames in different folders never collide in IndexedDB
+            id: `${folderId}/${name}`,
+            name,
             mimeType: file.type,
             size: file.size,
             modifiedTime: file.lastModified,
-            handle: handle,
             fileObj: file,
           });
+          if (files.length % 100 === 0) this._showProgress(`Reading "${folderName}"… ${files.length} files`);
         }
       }
+      if (token !== this.loadToken) return;
 
-      const photos = await this._pairFilesIntoPhotos(files, folderId, 'local');
+      for (const f of files) this.localFiles.set(f.id, f.fileObj);
+
+      const photos = this._pairFilesIntoPhotos(files, folderId);
       if (photos.length === 0) {
+        this._hideProgress();
         this.showToast('No photo pairs found in this directory.');
         return;
       }
 
-      // Pre-cache blobs directly into IndexedDB for local mode so offline/reloads work seamlessly
-      for (const p of photos) {
-        const fileRecord = files.find((f) => f.name === p.jpegName);
-        if (fileRecord && fileRecord.fileObj) {
-          await cacheStore.saveBlob(p.jpegFileId, fileRecord.fileObj);
-        }
-      }
+      await this._presentShoot(photos, folderId, folderName, 'local');
+      this.showToast(`Loaded ${photos.length} local photos`);
 
-      this.currentShoot = {
-        folderId,
-        name: folderName,
-        type: 'local',
-        count: photos.length,
-        updatedAt: Date.now(),
-      };
-
-      await cacheStore.saveShoot(this.currentShoot);
-      await cacheStore.savePhotos(photos);
-      localStorage.setItem('darkcull_last_folder_id', folderId);
-
-      this.allPhotos = photos;
-      this.setFilter(this.activeFilter);
-      this.showToast(`Loaded ${photos.length} local photo pairs!`);
+      this._loadXmpRatings(token);
+      this.cacheEntireShoot(); // persists blobs to IndexedDB in the background
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error(err);
+        this._hideProgress();
         this.showToast(`Local folder error: ${err.message}`);
       }
     }
+  }
+
+  /**
+   * Background: read each existing .xmp (tiny) with a small worker pool and apply its rating.
+   * Never overwrites a rating the user has set in this session.
+   */
+  async _loadXmpRatings(token) {
+    const todo = this.allPhotos.filter((p) => !p.ratingLoaded);
+    if (todo.length === 0) return;
+
+    let next = 0;
+    let done = 0;
+
+    const worker = async () => {
+      while (token === this.loadToken && next < todo.length) {
+        const photo = todo[next++];
+        try {
+          let text = '';
+          if (this.mode === 'gdrive') {
+            text = await driveService.downloadText(photo.xmpFileId);
+          } else {
+            const src = this.xmpSources.get(photo.id);
+            if (src && src.fileObj) text = await src.fileObj.text();
+          }
+          if (text) {
+            await cacheStore.saveXmpContent(photo.id, text);
+            if (!photo.userRated && photo.syncStatus !== 'dirty') {
+              photo.rating = XmpBuilder.parseRating(text);
+            }
+          }
+        } catch (e) {
+          console.warn(`Could not read XMP for ${photo.stem}:`, e);
+        } finally {
+          photo.ratingLoaded = true;
+          done++;
+          this._scheduleRefresh();
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(8, todo.length) }, worker));
+    if (token !== this.loadToken) return;
+
+    this._scheduleRefresh();
+    cacheStore.savePhotos(this.allPhotos).catch(console.warn);
+  }
+
+  /** Coalesce many background rating updates into one UI refresh. */
+  _scheduleRefresh() {
+    if (this._refreshTimer) return;
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = null;
+      this.updateTallies();
+      this._applyFilter(false, true);
+    }, 400);
   }
 
   async loadShootFromCache(shoot) {
@@ -473,10 +584,11 @@ class DarkCullApp {
   }
 
   /**
-   * Stem Pairing:
+   * Stem Pairing (synchronous & instant - no network):
    * Groups files by basename (case-insensitive) and pairs RAW, JPEG, and XMP.
+   * Existing XMP ratings are loaded later in the background by _loadXmpRatings().
    */
-  async _pairFilesIntoPhotos(files, folderId, mode) {
+  _pairFilesIntoPhotos(files, folderId) {
     // Map: lowerStem -> { stem, rawFile, jpegFile, xmpFile }
     const stemMap = new Map();
 
@@ -486,10 +598,10 @@ class DarkCullApp {
       if (lastDot === -1) continue;
 
       let stem = name.substring(0, lastDot);
-      let ext = name.substring(lastDot + 1).toUpperCase();
+      const ext = name.substring(lastDot + 1).toUpperCase();
 
       // Check for double extension: P1010234.RW2.xmp
-      let isXmp = ext === 'XMP';
+      const isXmp = ext === 'XMP';
       if (isXmp) {
         const secondDot = stem.lastIndexOf('.');
         if (secondDot !== -1) {
@@ -502,17 +614,14 @@ class DarkCullApp {
 
       const lowerStem = stem.toLowerCase();
       if (!stemMap.has(lowerStem)) {
-        stemMap.set(lowerStem, {
-          stem: stem,
-          rawFile: null,
-          jpegFile: null,
-          xmpFile: null,
-        });
+        stemMap.set(lowerStem, { stem, rawFile: null, jpegFile: null, xmpFile: null });
       }
 
       const entry = stemMap.get(lowerStem);
       if (isXmp) {
-        entry.xmpFile = f;
+        // Prefer the darktable-standard [raw].[ext].xmp over a bare [stem].xmp if both exist
+        const isDtStyle = stem !== name.substring(0, lastDot);
+        if (!entry.xmpFile || isDtStyle) entry.xmpFile = f;
       } else if (RAW_EXTS.has(ext)) {
         entry.rawFile = f;
       } else if (JPEG_EXTS.has(ext)) {
@@ -522,7 +631,7 @@ class DarkCullApp {
 
     const photos = [];
 
-    for (const [lowerStem, entry] of stemMap.entries()) {
+    for (const entry of stemMap.values()) {
       // Must have at least a JPEG or a RAW file
       if (!entry.jpegFile && !entry.rawFile) continue;
 
@@ -535,37 +644,22 @@ class DarkCullApp {
 
       const photo = {
         id: `${folderId}:${stem}`,
-        folderId: folderId,
-        stem: stem,
+        folderId,
+        stem,
         jpegFileId: entry.jpegFile ? entry.jpegFile.id : null,
-        jpegName: jpegName,
+        jpegName,
         rawFileId: entry.rawFile ? entry.rawFile.id : null,
-        rawName: rawName,
+        rawName,
         xmpFileId: entry.xmpFile ? entry.xmpFile.id : null,
         xmpName: entry.xmpFile ? entry.xmpFile.name : xmpName,
         rating: 0,
         cachedBlob: false,
         syncStatus: 'synced',
+        // false until the existing .xmp has been read in the background
+        ratingLoaded: !entry.xmpFile,
       };
 
-      // If XMP sidecar already exists on Drive or Local, parse initial rating
-      if (entry.xmpFile) {
-        try {
-          let xmpText = '';
-          if (mode === 'gdrive') {
-            xmpText = await driveService.downloadText(entry.xmpFile.id);
-          } else if (entry.xmpFile.fileObj) {
-            xmpText = await entry.xmpFile.fileObj.text();
-          }
-          if (xmpText) {
-            photo.rating = XmpBuilder.parseRating(xmpText);
-            await cacheStore.saveXmpContent(photo.id, xmpText);
-          }
-        } catch (e) {
-          console.warn(`Could not parse existing XMP for ${stem}:`, e);
-        }
-      }
-
+      if (entry.xmpFile) this.xmpSources.set(photo.id, entry.xmpFile);
       photos.push(photo);
     }
 
@@ -576,85 +670,106 @@ class DarkCullApp {
 
   // --- Image Blob Retrieval & Concurrency Pool Downloader ---
 
-  async fetchPhotoBlob(photo) {
-    if (!photo) return null;
+  /**
+   * Download one JPEG into IndexedDB. Concurrent callers (the viewer AND the background
+   * cache workers) share a single request per file instead of downloading it twice.
+   */
+  _downloadJpeg(photo) {
+    const key = photo.jpegFileId;
+    if (this.inflight.has(key)) return this.inflight.get(key);
 
-    // Check IndexedDB first
-    const cached = await cacheStore.getBlob(photo.jpegFileId || photo.id);
-    if (cached) {
-      return cached;
-    }
-
-    // If online Google Drive mode, download and cache
-    if (this.mode === 'gdrive' && photo.jpegFileId) {
-      try {
-        const blob = await driveService.downloadBlob(photo.jpegFileId);
-        await cacheStore.saveBlob(photo.jpegFileId, blob);
-        photo.cachedBlob = true;
-        cacheStore.updatePhoto(photo);
-        return blob;
-      } catch (e) {
-        console.error(`Failed to download blob for ${photo.stem}:`, e);
+    const promise = (async () => {
+      let blob = null;
+      if (this.mode === 'gdrive') {
+        blob = await driveService.downloadBlob(key);
+      } else {
+        blob = this.localFiles.get(key) || null;
       }
+      if (blob) {
+        await cacheStore.saveBlob(key, blob);
+        photo.cachedBlob = true;
+      }
+      return blob;
+    })().finally(() => this.inflight.delete(key));
+
+    this.inflight.set(key, promise);
+    return promise;
+  }
+
+  async fetchPhotoBlob(photo) {
+    if (!photo || !photo.jpegFileId) return null;
+
+    // Local files already open in memory are instant
+    if (this.mode === 'local' && this.localFiles.has(photo.jpegFileId)) {
+      return this.localFiles.get(photo.jpegFileId);
     }
 
-    return null;
+    // IndexedDB next
+    const cached = await cacheStore.getBlob(photo.jpegFileId);
+    if (cached) return cached;
+
+    // Otherwise download on demand (jumps the queue, shares in-flight request)
+    try {
+      return await this._downloadJpeg(photo);
+    } catch (e) {
+      console.error(`Failed to download blob for ${photo.stem}:`, e);
+      return null;
+    }
   }
 
   /**
-   * Concurrency pool (6 workers) to cache entire shoot into IndexedDB
+   * Background caching with a pool of 6 workers.
+   * Files nearest AFTER the photo you're currently viewing are fetched first, so you can
+   * keep culling forward while the rest of the shoot downloads.
    */
   async cacheEntireShoot() {
     if (!this.allPhotos || this.allPhotos.length === 0) return;
-    if (this.isCaching) return;
-    this.isCaching = true;
-
-    this.dom.cacheProgressBar.style.display = 'flex';
-    this.dom.cacheProgressFill.style.width = '0%';
-
-    const uncachedPhotos = [];
-    for (const p of this.allPhotos) {
-      const has = await cacheStore.hasBlob(p.jpegFileId || p.id);
-      if (!has && p.jpegFileId) {
-        uncachedPhotos.push(p);
-      }
-    }
+    const token = this.loadToken;
+    if (this._cachingToken === token) return; // already running for this shoot
+    this._cachingToken = token;
 
     const total = this.allPhotos.length;
-    let completed = total - uncachedPhotos.length;
+    this._showProgress(`Checking local cache… 0 / ${total}`);
+
+    const cachedKeys = await cacheStore.getBlobKeys();
+    if (token !== this.loadToken) return;
+
+    const order = new Map(this.allPhotos.map((p, i) => [p.id, i]));
+    const pending = this.allPhotos.filter((p) => p.jpegFileId && !cachedKeys.has(p.jpegFileId));
+    let completed = total - pending.length;
+    let failed = 0;
 
     const updateProgress = () => {
       const pct = Math.round((completed / total) * 100);
-      this.dom.cacheProgressFill.style.width = `${pct}%`;
-      this.dom.cacheProgressText.textContent = `Caching JPEGs: ${completed} / ${total} (${pct}%)`;
+      const failNote = failed ? ` · ${failed} failed` : '';
+      this._showProgress(`Caching JPEGs: ${completed} / ${total}${failNote}`, pct);
     };
-
     updateProgress();
 
-    if (uncachedPhotos.length === 0) {
-      this.isCaching = false;
-      this.dom.cacheProgressText.textContent = `All ${total} photos cached locally!`;
-      setTimeout(() => {
-        this.dom.cacheProgressBar.style.display = 'none';
-      }, 3000);
+    if (pending.length === 0) {
+      this._cachingToken = null;
+      this._showProgress(`All ${total} photos cached locally ✓`, 100);
+      this._hideProgress(3000);
       return;
     }
 
-    // Concurrency pool of 6 workers
-    const concurrency = 6;
-    let nextIndex = 0;
+    // Pick the pending photo closest ahead of the one on screen (wrapping around)
+    const pickNext = () => {
+      if (pending.length === 0) return null;
+      const cur = this.filteredPhotos[this.currentIndex];
+      const base = cur ? order.get(cur.id) : 0;
+      let idx = pending.findIndex((p) => order.get(p.id) >= base);
+      if (idx === -1) idx = 0;
+      return pending.splice(idx, 1)[0];
+    };
 
     const worker = async () => {
-      while (nextIndex < uncachedPhotos.length) {
-        const photo = uncachedPhotos[nextIndex++];
+      let photo;
+      while (token === this.loadToken && (photo = pickNext())) {
         try {
-          if (this.mode === 'gdrive') {
-            const blob = await driveService.downloadBlob(photo.jpegFileId);
-            await cacheStore.saveBlob(photo.jpegFileId, blob);
-            photo.cachedBlob = true;
-            cacheStore.updatePhoto(photo);
-          }
+          await this._downloadJpeg(photo);
         } catch (err) {
+          failed++;
           console.warn(`Worker failed to download ${photo.stem}:`, err);
         } finally {
           completed++;
@@ -663,18 +778,18 @@ class DarkCullApp {
       }
     };
 
-    const workers = [];
-    for (let i = 0; i < Math.min(concurrency, uncachedPhotos.length); i++) {
-      workers.push(worker());
-    }
+    await Promise.all(Array.from({ length: Math.min(6, pending.length) }, worker));
+    if (token !== this.loadToken) return;
 
-    await Promise.all(workers);
-    this.isCaching = false;
-    this.dom.cacheProgressText.textContent = `Finished caching ${total} JPEGs! (0ms Scrubbing Ready)`;
+    this._cachingToken = null;
+    if (failed) {
+      this._showProgress(`Cached ${completed - failed} / ${total} — ${failed} failed (tap Cache Entire Shoot to retry)`, 100);
+      this._hideProgress(8000);
+    } else {
+      this._showProgress(`Finished caching ${total} JPEGs ✓`, 100);
+      this._hideProgress(4000);
+    }
     await this._updateStorageStatus();
-    setTimeout(() => {
-      this.dom.cacheProgressBar.style.display = 'none';
-    }, 4000);
   }
 
   // --- Filtering & View State ---
@@ -699,9 +814,14 @@ class DarkCullApp {
     return true; // 'all'
   }
 
-  _applyFilter(resetIndex = true) {
+  /**
+   * @param {boolean} resetIndex   jump to the first photo of the new list
+   * @param {boolean} keepCurrent  stay on the same photo (by id) if it still matches -
+   *                               used by background rating updates so the image never flickers
+   */
+  _applyFilter(resetIndex = true, keepCurrent = false) {
+    const prev = keepCurrent ? this.filteredPhotos[this.currentIndex] : null;
     this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
-
     this.viewportEngine.setPhotos(this.filteredPhotos);
 
     if (this.filteredPhotos.length === 0) {
@@ -709,16 +829,29 @@ class DarkCullApp {
       this.dom.emptyState.style.display = 'flex';
       this.dom.mainImg.style.display = 'none';
       this.updateHud();
-    } else {
-      this.dom.emptyState.style.display = 'none';
-      this.dom.mainImg.style.display = 'block';
-      if (resetIndex) {
-        this.currentIndex = 0;
-      } else {
-        this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.filteredPhotos.length - 1));
-      }
-      this.renderCurrentPhoto();
+      return;
     }
+
+    this.dom.emptyState.style.display = 'none';
+    this.dom.mainImg.style.display = 'block';
+
+    if (prev) {
+      const idx = this.filteredPhotos.indexOf(prev);
+      if (idx !== -1) {
+        // Same photo still visible: just re-sync indices, don't reload the image
+        this.currentIndex = idx;
+        this.viewportEngine.reindex(idx);
+        this.updateHud();
+        return;
+      }
+    }
+
+    if (resetIndex) {
+      this.currentIndex = 0;
+    } else {
+      this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.filteredPhotos.length - 1));
+    }
+    this.renderCurrentPhoto();
   }
 
   updateTallies() {
@@ -828,40 +961,40 @@ class DarkCullApp {
       return;
     }
 
-    // 1. Instantly update UI and memory (<16ms)
+    // 1. Update memory + UI + advance SYNCHRONOUSLY (nothing awaited before this finishes)
     photo.rating = rating;
     photo.syncStatus = 'dirty';
+    photo.userRated = true; // background XMP loading must never overwrite this
+    photo.ratingLoaded = true;
     this.updateTallies();
 
-    // 2. Persist to IndexedDB
-    await cacheStore.updatePhoto(photo);
+    if (!this._matchesActiveFilter(photo)) {
+      // Photo left the current filter: list shrinks, same index now points at the next photo
+      this._applyFilter(false);
+    } else {
+      this.updateHud();
+      if (this.autoAdvance) this.nextPhoto();
+    }
 
-    // 3. Enqueue to background sync queue
+    // 2. Persist + enqueue in the background
     const syncItem = {
       id: photo.id,
       folderId: photo.folderId,
       stem: photo.stem,
-      rating: rating,
+      rating,
       timestamp: Date.now(),
       mode: this.mode,
       photoData: { ...photo },
     };
-    await cacheStore.enqueueSyncItem(syncItem);
+    try {
+      await Promise.all([cacheStore.updatePhoto(photo), cacheStore.enqueueSyncItem(syncItem)]);
+    } catch (err) {
+      console.error('Failed to persist rating:', err);
+      this.showToast('⚠ Could not save rating locally');
+    }
     this.updateSyncBadge();
 
-    // 4. Check if photo still matches the active filter
-    const stillMatches = this._matchesActiveFilter(photo);
-    if (!stillMatches) {
-      // Remove from current filtered view and keep currentIndex pointing at the next item
-      this._applyFilter(false);
-    } else {
-      this.updateHud();
-      if (this.autoAdvance) {
-        this.nextPhoto();
-      }
-    }
-
-    // 5. Trigger background sync processor non-blockingly
+    // 3. Trigger background sync processor non-blockingly
     this.flushSyncQueue();
   }
 
@@ -875,77 +1008,104 @@ class DarkCullApp {
   async updateSyncBadge() {
     const queue = await cacheStore.getPendingSyncItems();
     const count = queue.length;
+    const badge = this.dom.hudSyncBadge;
 
     if (count === 0) {
-      this.dom.hudSyncBadge.textContent = 'Synced';
-      this.dom.hudSyncBadge.className = 'hud-badge badge-synced';
+      badge.textContent = 'Synced';
+      badge.className = 'hud-badge badge-synced';
       this.dom.hudSyncBtn.style.display = 'none';
-    } else {
-      this.dom.hudSyncBadge.textContent = `Syncing ${count} XMPs...`;
-      this.dom.hudSyncBadge.className = 'hud-badge badge-syncing';
-      this.dom.hudSyncBtn.style.display = 'inline-block';
+      return;
     }
+
+    const stuckLocal = queue.filter((i) => !this._canSyncItem(i)).length;
+    if (stuckLocal === count) {
+      badge.textContent = `${count} unsynced — reopen folder`;
+    } else {
+      badge.textContent = `Syncing ${count} XMP${count === 1 ? '' : 's'}...`;
+    }
+    badge.className = 'hud-badge badge-syncing';
+    this.dom.hudSyncBtn.style.display = 'inline-block';
+  }
+
+  /** Local-folder items can only be written while that folder's handle is open this session. */
+  _canSyncItem(item) {
+    if (item.mode !== 'local') return true;
+    return Boolean(this.localDirHandle) && item.folderId === `local_${this.localDirHandle.name}`;
+  }
+
+  async _syncOne(item) {
+    // Always prefer the LIVE photo object so xmpFileId learned from an earlier upload is reused
+    // (otherwise a second rating of the same photo would create a duplicate .xmp on Drive)
+    const live = this.allPhotos.find((p) => p.id === item.id);
+    const photo = live || item.photoData;
+
+    // Base document to patch: cached original, else fetch it, so darktable history is never wiped
+    let baseXml = await cacheStore.getXmpContent(item.id);
+    if (!baseXml && item.mode === 'gdrive' && photo.xmpFileId) {
+      baseXml = await driveService.downloadText(photo.xmpFileId);
+    } else if (!baseXml && item.mode === 'local') {
+      try {
+        const existing = await this.localDirHandle.getFileHandle(photo.xmpName);
+        baseXml = await (await existing.getFile()).text();
+      } catch (_) {
+        /* no sidecar yet */
+      }
+    }
+
+    const newXml = baseXml
+      ? XmpBuilder.patchRating(baseXml, item.rating)
+      : XmpBuilder.generateMinimalXmp(item.rating);
+
+    if (item.mode === 'gdrive') {
+      if (photo.xmpFileId) {
+        await driveService.updateXmpFile(photo.xmpFileId, newXml);
+      } else {
+        const res = await driveService.createXmpFile(photo.folderId, photo.xmpName, newXml);
+        photo.xmpFileId = res.id;
+        item.photoData.xmpFileId = res.id;
+      }
+    } else {
+      const fileHandle = await this.localDirHandle.getFileHandle(photo.xmpName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(newXml);
+      await writable.close();
+    }
+
+    await cacheStore.saveXmpContent(item.id, newXml);
+
+    // Only dequeue if the rating wasn't changed again while we were uploading
+    const current = await cacheStore.getSyncItem(item.id);
+    if (current && current.timestamp === item.timestamp) {
+      await cacheStore.removeSyncItem(item.id);
+      photo.syncStatus = 'synced';
+    }
+    await cacheStore.updatePhoto(photo);
   }
 
   /**
-   * Background processor: Non-blockingly syncs dirty XMPs to Drive or local filesystem
+   * Background processor: Non-blockingly syncs dirty XMPs to Drive or local filesystem.
+   * Loops until a full pass makes no progress, so ratings made mid-sync are picked up too.
    */
   async flushSyncQueue() {
     if (this.isSyncing) return;
     this.isSyncing = true;
 
     try {
-      const queue = await cacheStore.getPendingSyncItems();
-      if (queue.length === 0) {
-        this.updateSyncBadge();
-        this.isSyncing = false;
-        return;
-      }
+      let progressed = true;
+      while (progressed) {
+        progressed = false;
+        const queue = await cacheStore.getPendingSyncItems();
+        if (queue.length === 0) break;
 
-      for (const item of queue) {
-        try {
-          const photo = item.photoData;
-
-          // Retrieve cached original XMP if it exists
-          let cachedXml = await cacheStore.getXmpContent(item.id);
-          let newXml = '';
-
-          if (cachedXml) {
-            // Non-destructively patch existing XML
-            newXml = XmpBuilder.patchRating(cachedXml, item.rating);
-          } else {
-            // Generate clean minimal darktable XMP
-            newXml = XmpBuilder.generateMinimalXmp(item.rating);
+        for (const item of queue) {
+          if (!this._canSyncItem(item)) continue;
+          try {
+            await this._syncOne(item);
+            progressed = true;
+          } catch (err) {
+            console.error(`Sync error on photo ${item.stem}:`, err);
+            if (!navigator.onLine) return; // retry when we're back online
           }
-
-          if (item.mode === 'gdrive') {
-            if (photo.xmpFileId) {
-              // PATCH existing file
-              await driveService.updateXmpFile(photo.xmpFileId, newXml);
-            } else {
-              // POST new file
-              const res = await driveService.createXmpFile(photo.folderId, photo.xmpName, newXml);
-              photo.xmpFileId = res.id;
-              await cacheStore.updatePhoto(photo);
-            }
-          } else if (item.mode === 'local' && this.localDirHandle) {
-            // Write directly to local folder sidecar file
-            const fileHandle = await this.localDirHandle.getFileHandle(photo.xmpName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(newXml);
-            await writable.close();
-          }
-
-          // Update cached XMP content and remove from queue
-          await cacheStore.saveXmpContent(item.id, newXml);
-          await cacheStore.removeSyncItem(item.id);
-
-          photo.syncStatus = 'synced';
-          await cacheStore.updatePhoto(photo);
-        } catch (err) {
-          console.error(`Sync error on photo ${item.stem}:`, err);
-          // If auth error or offline, break loop to retry later
-          if (!navigator.onLine) break;
         }
       }
     } finally {
