@@ -29,6 +29,7 @@ class DarkCullApp {
     this.filteredPhotos = []; // Current view subset
     this.activeFilter = 'not-rejected'; // 'not-rejected' | 'unrated' | '3' | '4' | '5' | 'rejected' | 'all'
     this.currentIndex = 0;
+    this._anchorPhoto = null; // Tracks current photo in shoot order for relative filter switching & session resume
     this.autoAdvance = true;
     this.rejectSkipMode = false;
     this.undoStack = []; // History of rating/skip actions for Long-Press & Ctrl+Z Undo
@@ -444,13 +445,67 @@ class DarkCullApp {
       const s = savedById.get(p.id);
       if (!s) continue;
       if (!p.xmpFileId && s.xmpFileId) p.xmpFileId = s.xmpFileId;
+      if (s.cachedBlob) p.cachedBlob = true;
       if (dirtyIds.has(p.id)) {
-        p.rating = s.rating;
+        p.rating = s.rating === 1 || s.rating === 2 ? 0 : s.rating;
         p.syncStatus = 'dirty';
         p.ratingLoaded = true;
         p.userRated = true;
+      } else if (s.rating !== undefined && s.ratingLoaded) {
+        p.rating = s.rating === 1 || s.rating === 2 ? 0 : s.rating;
       }
     }
+  }
+
+  /**
+   * Saves the active filter and current photo spot for this shoot in localStorage
+   * so closing/reopening the app or reloading the shoot resumes right where the user left off.
+   */
+  _saveProgress() {
+    if (!this.currentShoot || !this.currentShoot.folderId) return;
+    const currentPhoto =
+      (this.currentIndex >= 0 && this.filteredPhotos[this.currentIndex]) ||
+      this._anchorPhoto;
+    const payload = {
+      filter: this.activeFilter,
+      photoId: currentPhoto ? currentPhoto.id : null,
+      stem: currentPhoto ? currentPhoto.stem : null,
+      updatedAt: Date.now(),
+    };
+    try {
+      localStorage.setItem(`darkcull_progress_${this.currentShoot.folderId}`, JSON.stringify(payload));
+    } catch (e) {
+      console.warn('Could not save shoot progress to localStorage:', e);
+    }
+  }
+
+  /**
+   * Restores the saved filter and anchor photo for a shoot from localStorage.
+   */
+  _restoreProgress(folderId) {
+    this._anchorPhoto = null;
+    if (!folderId) return false;
+    try {
+      const raw = localStorage.getItem(`darkcull_progress_${folderId}`);
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      const validFilters = new Set(['not-rejected', 'unrated', '3', '4', '5', 'rejected', 'all']);
+      if (saved.filter && validFilters.has(saved.filter)) {
+        this.activeFilter = saved.filter;
+      }
+      if (saved.photoId || saved.stem) {
+        const match =
+          this.allPhotos.find((p) => p.id === saved.photoId) ||
+          this.allPhotos.find((p) => p.stem === saved.stem);
+        if (match) {
+          this._anchorPhoto = match;
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not restore shoot progress:', e);
+    }
+    return false;
   }
 
   /** Common "folder is indexed, show it now" step shared by Drive and Local modes. */
@@ -459,7 +514,13 @@ class DarkCullApp {
 
     this.currentShoot = { folderId, name: folderName, type, count: photos.length, updatedAt: Date.now() };
     this.allPhotos = photos;
-    this.setFilter(this.activeFilter);
+    this.filteredPhotos = [];
+    this.currentIndex = -1;
+    const restored = this._restoreProgress(folderId);
+    if (!restored && this.allPhotos.length > 0) {
+      this._anchorPhoto = this.allPhotos[0];
+    }
+    this.setFilter(this.activeFilter || 'not-rejected');
     localStorage.setItem('darkcull_last_folder_id', folderId);
 
     // Persist in the background - never block the first photo on IndexedDB writes
@@ -653,8 +714,18 @@ class DarkCullApp {
         }
       }
       this.allPhotos = photos;
+      this.filteredPhotos = [];
+      this.currentIndex = -1;
+      const restored = this._restoreProgress(shoot.folderId);
+      if (!restored && this.allPhotos.length > 0) {
+        this._anchorPhoto = this.allPhotos[0];
+      }
       this.setFilter(this.activeFilter || 'not-rejected');
-      this.showToast(`Restored shoot: ${shoot.name} (${photos.length} photos)`);
+      const posText =
+        restored && this.currentIndex >= 0
+          ? ` — resumed at ${this.currentIndex + 1}/${this.filteredPhotos.length}`
+          : '';
+      this.showToast(`Restored shoot: ${shoot.name} (${photos.length} photos${posText})`);
     }
   }
 
@@ -917,8 +988,9 @@ class DarkCullApp {
     this.dom.filterPills.forEach((p) => {
       p.classList.toggle('active', p.dataset.filter === filterType);
     });
-    this._applyFilter(true);
+    this._applyFilter(false);
     this.updateTallies();
+    this._saveProgress();
   }
 
   _matchesActiveFilter(photo) {
@@ -933,17 +1005,47 @@ class DarkCullApp {
   }
 
   /**
-   * @param {boolean} resetIndex   jump to the first photo of the new list
-   * @param {boolean} keepCurrent  stay on the same photo (by id) if it still matches -
+   * Rebuilds `this.filteredPhotos` while keeping the viewer at the same relative position in the shoot.
+   * If the anchor photo matches the active filter, stays on it; otherwise jumps to the next matching
+   * photo below/after it in shoot order (or the nearest preceding photo if at the end of the shoot).
+   *
+   * @param {boolean} resetIndex   if true, jump to the first photo of the new list
+   * @param {boolean} keepCurrent  stay on the same photo (by reference) if it still matches -
    *                               used by background rating updates so the image never flickers
    */
-  _applyFilter(resetIndex = true, keepCurrent = false) {
-    const prev = keepCurrent ? this.filteredPhotos[this.currentIndex] : null;
-    this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
+  _applyFilter(resetIndex = false, keepCurrent = false) {
+    const currentVisible =
+      this.currentIndex >= 0 && this.currentIndex < this.filteredPhotos.length
+        ? this.filteredPhotos[this.currentIndex]
+        : null;
+    const anchor = resetIndex ? null : currentVisible || this._anchorPhoto;
+
+    const nextFiltered = [];
+    let seenAnchor = false;
+    let targetIndex = -1;
+
+    for (let i = 0; i < this.allPhotos.length; i++) {
+      const p = this.allPhotos[i];
+      if (anchor && p === anchor) {
+        seenAnchor = true;
+      }
+      if (this._matchesActiveFilter(p)) {
+        nextFiltered.push(p);
+        if (anchor && p === anchor) {
+          targetIndex = nextFiltered.length - 1;
+        } else if (seenAnchor && targetIndex === -1) {
+          // First matching photo after the anchor in shoot order
+          targetIndex = nextFiltered.length - 1;
+        }
+      }
+    }
+
+    this.filteredPhotos = nextFiltered;
     this.viewportEngine.setPhotos(this.filteredPhotos);
 
     if (this.filteredPhotos.length === 0) {
       this.currentIndex = -1;
+      if (anchor) this._anchorPhoto = anchor;
       this.dom.emptyState.style.display = 'flex';
       this.dom.mainImg.style.display = 'none';
       this.updateHud();
@@ -953,11 +1055,12 @@ class DarkCullApp {
     this.dom.emptyState.style.display = 'none';
     this.dom.mainImg.style.display = 'block';
 
-    if (prev) {
-      const idx = this.filteredPhotos.indexOf(prev);
+    if (keepCurrent && currentVisible) {
+      const idx = this.filteredPhotos.indexOf(currentVisible);
       if (idx !== -1) {
         // Same photo still visible: just re-sync indices, don't reload the image
         this.currentIndex = idx;
+        this._anchorPhoto = currentVisible;
         this.viewportEngine.reindex(idx);
         this.updateHud();
         return;
@@ -966,8 +1069,13 @@ class DarkCullApp {
 
     if (resetIndex) {
       this.currentIndex = 0;
+    } else if (targetIndex !== -1) {
+      this.currentIndex = targetIndex;
+    } else if (seenAnchor) {
+      // Anchor was near the end of the shoot and no matching photo existed after it
+      this.currentIndex = this.filteredPhotos.length - 1;
     } else {
-      this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.filteredPhotos.length - 1));
+      this.currentIndex = 0;
     }
     this.renderCurrentPhoto();
   }
@@ -1061,9 +1169,11 @@ class DarkCullApp {
 
   renderCurrentPhoto() {
     if (this.currentIndex < 0 || this.currentIndex >= this.filteredPhotos.length) return;
+    this._anchorPhoto = this.filteredPhotos[this.currentIndex];
     this.updateHud();
     this.updateExifDisplay();
     this.viewportEngine.showPhoto(this.currentIndex);
+    this._saveProgress();
   }
 
   async updateExifDisplay() {
