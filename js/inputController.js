@@ -48,6 +48,8 @@ export class InputController {
     this.longPressTriggered = false;
     this._longPressTimer = null;
     this._badgeHideTimer = null;
+    this._commitTimer = null;
+    this._pendingCommit = null;
     this.lastTapTime = 0;
     this.lastTapX = 0;
     this.lastTapY = 0;
@@ -193,6 +195,18 @@ export class InputController {
     }
   }
 
+  _flushPendingCommit() {
+    if (this._commitTimer) {
+      clearTimeout(this._commitTimer);
+      this._commitTimer = null;
+    }
+    if (this._pendingCommit) {
+      const fn = this._pendingCommit;
+      this._pendingCommit = null;
+      fn();
+    }
+  }
+
   _resetCardTransform() {
     if (this.imgElement && !this.isZoomedFn()) {
       this.imgElement.style.transition = 'transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.18s ease';
@@ -217,6 +231,7 @@ export class InputController {
       'touchstart',
       (e) => {
         this._clearLongPressTimer();
+        this._flushPendingCommit();
 
         if (e.touches.length !== 1) {
           this.isSwiping = false;
@@ -375,13 +390,16 @@ export class InputController {
           this.imgElement.style.transform = `translate3d(${flyX}px, ${flyY}px, 0) scale(0.92)`;
           this.imgElement.style.opacity = '0.2';
 
-          setTimeout(() => {
+          this._pendingCommit = () => {
             this._resetCardTransform();
             if (intent.action === 'skip') {
               this.onSkip();
             } else {
               this.onRate(intent.rating);
             }
+          };
+          this._commitTimer = setTimeout(() => {
+            this._flushPendingCommit();
           }, 120);
         } else {
           // Snap back to center

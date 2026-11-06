@@ -75,6 +75,8 @@ class DarkCullApp {
       viewport: document.getElementById('viewport'),
       mainImg: document.getElementById('mainImg'),
       emptyState: document.getElementById('emptyState'),
+      emptyOpenLocalBtn: document.getElementById('emptyOpenLocalBtn'),
+      emptyOpenDriveBtn: document.getElementById('emptyOpenDriveBtn'),
       rawNotice: document.getElementById('rawNotice'),
       rawNoticeFilename: document.getElementById('rawNoticeFilename'),
       loupeIndicator: document.getElementById('loupeIndicator'),
@@ -314,6 +316,11 @@ class DarkCullApp {
     this.dom.folderSelectBtn.addEventListener('click', () => {
       this.openFolderPickerModal();
     });
+    if (this.dom.emptyOpenDriveBtn) {
+      this.dom.emptyOpenDriveBtn.addEventListener('click', () => {
+        this.openFolderPickerModal();
+      });
+    }
     this.dom.closeFolderModalBtn.addEventListener('click', () => {
       this.dom.folderModal.classList.remove('open');
     });
@@ -332,16 +339,21 @@ class DarkCullApp {
     this.dom.localFolderBtn.addEventListener('click', () => {
       this.openLocalFolderPicker();
     });
+    if (this.dom.emptyOpenLocalBtn) {
+      this.dom.emptyOpenLocalBtn.addEventListener('click', () => {
+        this.openLocalFolderPicker();
+      });
+    }
 
-    // Sync button
+    // Sync button (user-initiated click: allow interactive OAuth popup if token expired)
     this.dom.hudSyncBtn.addEventListener('click', () => {
-      this.flushSyncQueue();
+      this.flushSyncQueue(true);
     });
 
     // Online / Offline listeners
     window.addEventListener('online', () => {
       this.showToast('Back online! Syncing ratings...');
-      this.flushSyncQueue();
+      this.flushSyncQueue(false);
     });
     window.addEventListener('offline', () => {
       this.showToast('Offline mode active. Ratings saved locally.');
@@ -1289,27 +1301,15 @@ class DarkCullApp {
     photo.ratingLoaded = true;
     this.updateTallies();
 
-    this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
-    let idx = this.filteredPhotos.indexOf(photo);
-    if (idx === -1) {
+    this._anchorPhoto = photo;
+    if (!this._matchesActiveFilter(photo)) {
       // If active filter hides the restored rating, switch to 'not-rejected' or 'all' so user sees the photo
       this.activeFilter = restoredRating === -1 ? 'all' : 'not-rejected';
       this.dom.filterPills.forEach((p) => {
         p.classList.toggle('active', p.dataset.filter === this.activeFilter);
       });
-      this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
-      idx = this.filteredPhotos.indexOf(photo);
     }
-
-    this.viewportEngine.setPhotos(this.filteredPhotos);
-    if (this.filteredPhotos.length > 0) {
-      this.dom.emptyState.style.display = 'none';
-      this.currentIndex = Math.max(0, idx);
-      this.renderCurrentPhoto();
-    } else {
-      this.currentIndex = -1;
-      this.updateHud();
-    }
+    this._applyFilter(false);
 
     const ratingLabel =
       restoredRating === -1
@@ -1335,7 +1335,7 @@ class DarkCullApp {
       console.error('Failed to persist undo rating:', err);
     }
     this.updateSyncBadge();
-    this.flushSyncQueue();
+    this.flushSyncQueue(true);
   }
 
   // --- Rating & Non-Destructive XMP Background Sync ---
@@ -1371,6 +1371,7 @@ class DarkCullApp {
     } else {
       this.updateHud();
       if (this.autoAdvance) this.nextPhoto();
+      else this._saveProgress();
     }
 
     // 2. Persist + enqueue in the background
@@ -1392,13 +1393,14 @@ class DarkCullApp {
     this.updateSyncBadge();
 
     // 3. Trigger background sync processor non-blockingly
-    this.flushSyncQueue();
+    this.flushSyncQueue(true);
   }
 
   async _checkOfflineQueue() {
     await this.updateSyncBadge();
     if (navigator.onLine) {
-      this.flushSyncQueue();
+      // On startup, auto-flush without forcing an unprompted OAuth popup if the 1h token expired
+      this.flushSyncQueue(false);
     }
   }
 
@@ -1415,10 +1417,16 @@ class DarkCullApp {
     }
 
     const stuckLocal = queue.filter((i) => !this._canSyncItem(i)).length;
+    const hasGdrive = queue.some((i) => i.mode === 'gdrive');
+
     if (stuckLocal === count) {
       badge.textContent = `${count} unsynced — reopen folder`;
-    } else {
+    } else if (!navigator.onLine && hasGdrive) {
+      badge.textContent = `${count} queued (offline)`;
+    } else if (this.isSyncing) {
       badge.textContent = `Syncing ${count} XMP${count === 1 ? '' : 's'}...`;
+    } else {
+      badge.textContent = `${count} unsynced — tap ↻`;
     }
     badge.className = 'hud-badge badge-syncing';
     this.dom.hudSyncBtn.style.display = 'inline-block';
@@ -1431,10 +1439,14 @@ class DarkCullApp {
   }
 
   async _syncOne(item) {
-    // Always prefer the LIVE photo object so xmpFileId learned from an earlier upload is reused
-    // (otherwise a second rating of the same photo would create a duplicate .xmp on Drive)
+    // Always prefer the LIVE photo object or the latest IndexedDB photo record so xmpFileId
+    // learned from an earlier upload is reused (preventing duplicate .xmp files on Drive)
     const live = this.allPhotos.find((p) => p.id === item.id);
-    const photo = live || item.photoData;
+    const stored = !live ? await cacheStore.getPhoto(item.id) : null;
+    const photo = live || stored || item.photoData;
+    if (stored && stored.xmpFileId && !photo.xmpFileId) {
+      photo.xmpFileId = stored.xmpFileId;
+    }
 
     // Base document to patch: cached original, else fetch it, so darktable history is never wiped
     let baseXml = await cacheStore.getXmpContent(item.id);
@@ -1482,10 +1494,14 @@ class DarkCullApp {
   /**
    * Background processor: Non-blockingly syncs dirty XMPs to Drive or local filesystem.
    * Loops until a full pass makes no progress, so ratings made mid-sync are picked up too.
+   *
+   * @param {boolean} allowInteractiveAuth - if false, skips gdrive items when OAuth token is expired
+   *                                         rather than opening an unprompted popup on page load
    */
-  async flushSyncQueue() {
+  async flushSyncQueue(allowInteractiveAuth = false) {
     if (this.isSyncing) return;
     this.isSyncing = true;
+    await this.updateSyncBadge();
 
     try {
       let progressed = true;
@@ -1496,9 +1512,14 @@ class DarkCullApp {
 
         for (const item of queue) {
           if (!this._canSyncItem(item)) continue;
+          if (item.mode === 'gdrive') {
+            if (!navigator.onLine) continue;
+            if (!driveService.isAuthenticated() && !allowInteractiveAuth) continue;
+          }
           try {
             await this._syncOne(item);
             progressed = true;
+            this.updateSyncBadge();
           } catch (err) {
             console.error(`Sync error on photo ${item.stem}:`, err);
             if (!navigator.onLine) return; // retry when we're back online

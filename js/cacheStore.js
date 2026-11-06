@@ -124,6 +124,16 @@ export class CacheStore {
     });
   }
 
+  async getPhoto(id) {
+    const db = await this._ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('photos', 'readonly');
+      const req = tx.objectStore('photos').get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   async updatePhoto(photo) {
     const db = await this._ensureDb();
     return new Promise((resolve, reject) => {

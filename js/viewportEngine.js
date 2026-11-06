@@ -264,6 +264,7 @@ export class ViewportEngine {
 
     this.panX = (imgCenterX - clickX) * (this.zoomScale - 1);
     this.panY = (imgCenterY - clickY) * (this.zoomScale - 1);
+    this._clampPan();
 
     this.isZoomed = true;
     this.imgElement.style.transition = 'transform 0.15s ease-out';
@@ -272,6 +273,15 @@ export class ViewportEngine {
     if (this.loupeOverlay) {
       this.loupeOverlay.classList.add('active');
     }
+  }
+
+  _clampPan() {
+    if (!this.container || !this.imgElement) return;
+    const rect = this.container.getBoundingClientRect();
+    const maxPanX = Math.max(0, (rect.width * (this.zoomScale - 1)) / 2);
+    const maxPanY = Math.max(0, (rect.height * (this.zoomScale - 1)) / 2);
+    this.panX = Math.max(-maxPanX, Math.min(maxPanX, this.panX));
+    this.panY = Math.max(-maxPanY, Math.min(maxPanY, this.panY));
   }
 
   resetZoom() {
@@ -315,6 +325,7 @@ export class ViewportEngine {
     if (!this.isDragging || !this.isZoomed) return;
     this.panX = e.clientX - this.startX;
     this.panY = e.clientY - this.startY;
+    this._clampPan();
     this._applyTransform();
   }
 

@@ -9,12 +9,27 @@ const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 const CLIENT_ID_KEY = 'darkcull_gdrive_client_id';
 
 const ACCESS_TOKEN_KEY = 'darkcull_manual_access_token';
+const OAUTH_TOKEN_KEY = 'darkcull_oauth_token';
+const OAUTH_EXPIRES_KEY = 'darkcull_oauth_expires_at';
 
 export class DriveService {
   constructor() {
     this.tokenClient = null;
-    this.accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) || null;
-    this.tokenExpiresAt = this.accessToken ? Date.now() + 3600 * 1000 : 0;
+    const manualToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (manualToken) {
+      this.accessToken = manualToken;
+      this.tokenExpiresAt = Date.now() + 3600 * 1000;
+    } else {
+      const savedOauth = localStorage.getItem(OAUTH_TOKEN_KEY);
+      const savedExp = parseInt(localStorage.getItem(OAUTH_EXPIRES_KEY) || '0', 10);
+      if (savedOauth && Date.now() < savedExp) {
+        this.accessToken = savedOauth;
+        this.tokenExpiresAt = savedExp;
+      } else {
+        this.accessToken = null;
+        this.tokenExpiresAt = 0;
+      }
+    }
   }
 
   getClientId() {
@@ -26,6 +41,8 @@ export class DriveService {
       localStorage.setItem(CLIENT_ID_KEY, clientId.trim());
     } else {
       localStorage.removeItem(CLIENT_ID_KEY);
+      localStorage.removeItem(OAUTH_TOKEN_KEY);
+      localStorage.removeItem(OAUTH_EXPIRES_KEY);
     }
   }
 
@@ -89,6 +106,10 @@ export class DriveService {
             // expires_in is seconds
             const expiresIn = parseInt(response.expires_in, 10) || 3600;
             this.tokenExpiresAt = Date.now() + (expiresIn - 60) * 1000;
+            try {
+              localStorage.setItem(OAUTH_TOKEN_KEY, this.accessToken);
+              localStorage.setItem(OAUTH_EXPIRES_KEY, String(this.tokenExpiresAt));
+            } catch (_) {}
             resolve(this.accessToken);
           },
         });
@@ -135,7 +156,7 @@ export class DriveService {
       try {
         response = await fetch(url, { ...options, headers });
       } catch (netErr) {
-        if (attempt >= MAX_ATTEMPTS) throw netErr;
+        if (attempt >= MAX_ATTEMPTS || !navigator.onLine) throw netErr;
         await new Promise((r) => setTimeout(r, 400 * 2 ** (attempt - 1)));
         continue;
       }
@@ -148,6 +169,8 @@ export class DriveService {
         }
         this.accessToken = null;
         this.tokenExpiresAt = 0;
+        localStorage.removeItem(OAUTH_TOKEN_KEY);
+        localStorage.removeItem(OAUTH_EXPIRES_KEY);
         await this._authenticateOnce();
         continue;
       }
@@ -171,8 +194,10 @@ export class DriveService {
     const url = new URL('https://www.googleapis.com/drive/v3/files');
     url.searchParams.set('q', query);
     url.searchParams.set('pageSize', pageSize.toString());
-    url.searchParams.set('fields', 'nextPageToken, files(id, name, modifiedTime)');
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,modifiedTime)');
     url.searchParams.set('orderBy', 'modifiedTime desc');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
 
     const res = await this._authFetch(url.toString());
     if (!res.ok) {
@@ -187,7 +212,7 @@ export class DriveService {
    * Gets metadata for a specific folder by ID
    */
   async getFolderMeta(folderId) {
-    const url = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name`;
+    const url = `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name&supportsAllDrives=true`;
     const res = await this._authFetch(url);
     if (!res.ok) {
       throw new Error(`Failed to get folder info for ID ${folderId}`);
@@ -245,7 +270,7 @@ export class DriveService {
    * Downloads a binary file as a Blob (e.g. JPEG image)
    */
   async downloadBlob(fileId) {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
     const res = await this._authFetch(url);
     if (!res.ok) {
       throw new Error(`Failed to download file ${fileId} (${res.status})`);
@@ -257,7 +282,7 @@ export class DriveService {
    * Downloads a text file (e.g. .xmp sidecar)
    */
   async downloadText(fileId) {
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
     const res = await this._authFetch(url);
     if (!res.ok) {
       throw new Error(`Failed to download XMP text ${fileId} (${res.status})`);
@@ -292,7 +317,7 @@ export class DriveService {
       xmlContent +
       closeDelimiter;
 
-    const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name';
+    const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name&supportsAllDrives=true';
     const res = await this._authFetch(url, {
       method: 'POST',
       headers: {
@@ -315,7 +340,7 @@ export class DriveService {
    * @param {string} xmlContent
    */
   async updateXmpFile(fileId, xmlContent) {
-    const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+    const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`;
     const res = await this._authFetch(url, {
       method: 'PATCH',
       headers: {
