@@ -34,7 +34,15 @@ export class InputController {
     this.onToggleZoom = handlers.onToggleZoom || (() => {}); // (x, y) => {}
     this.onToggleFullscreen = handlers.onToggleFullscreen || (() => {});
     this.isZoomedFn = handlers.isZoomedFn || (() => false);
-    this.isRejectSkipModeFn = handlers.isRejectSkipModeFn || (() => false);
+    this.getGestureMapFn =
+      handlers.getGestureMapFn ||
+      (() => ({
+        up: 'rate_5',
+        down: 'reject',
+        left: 'rate_3',
+        right: 'rate_4',
+        longPress: 'undo',
+      }));
 
     this.touchContainer = handlers.touchContainer || null;
     this.imgElement = handlers.imgElement || null;
@@ -145,6 +153,46 @@ export class InputController {
     });
   }
 
+  _resolveGestureAction(actionKey, dir = null) {
+    switch (actionKey) {
+      case 'skip':
+        return { action: 'skip', label: '➔ SKIP', cls: 'swipe-skip', dir };
+      case 'back':
+        return { action: 'back', label: '⬅ BACK', cls: 'swipe-back', dir };
+      case 'undo':
+        return { action: 'undo', label: '↺ UNDO', cls: 'swipe-undo', dir };
+      case 'reject':
+        return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir };
+      case 'rate_0':
+        return { action: 'rate', rating: 0, label: '★ 0', cls: 'swipe-rate-0', dir };
+      case 'rate_1':
+        return { action: 'rate', rating: 1, label: '★ 1', cls: 'swipe-rate-1', dir };
+      case 'rate_2':
+        return { action: 'rate', rating: 2, label: '★ 2', cls: 'swipe-rate-2', dir };
+      case 'rate_3':
+        return { action: 'rate', rating: 3, label: '★ 3', cls: 'swipe-rate-3', dir };
+      case 'rate_4':
+        return { action: 'rate', rating: 4, label: '★ 4', cls: 'swipe-rate-4', dir };
+      case 'rate_5':
+        return { action: 'rate', rating: 5, label: '★ 5', cls: 'swipe-rate-5', dir };
+      default:
+        return null;
+    }
+  }
+
+  _executeGestureIntent(intent) {
+    if (!intent) return;
+    if (intent.action === 'skip') {
+      this.onSkip();
+    } else if (intent.action === 'back') {
+      this.onPrev();
+    } else if (intent.action === 'undo') {
+      this.onUndo();
+    } else if (intent.action === 'rate') {
+      this.onRate(intent.rating);
+    }
+  }
+
   _getSwipeIntent(deltaX, deltaY) {
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
@@ -152,40 +200,15 @@ export class InputController {
 
     if (dist < 30) return null;
 
-    if (this.isRejectSkipModeFn()) {
-      // Fast 2-way Reject / Skip mode:
-      // Right or Up = Skip (Keep), Left or Down = Reject (-1)
-      if (absX > absY) {
-        if (deltaX > 0) {
-          return { action: 'skip', label: '➔ SKIP', cls: 'swipe-skip', dir: 'right' };
-        } else {
-          return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'left' };
-        }
-      } else {
-        if (deltaY < 0) {
-          return { action: 'skip', label: '➔ SKIP', cls: 'swipe-skip', dir: 'up' };
-        } else {
-          return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'down' };
-        }
-      }
+    let dir;
+    if (absX > absY) {
+      dir = deltaX > 0 ? 'right' : 'left';
+    } else {
+      dir = deltaY < 0 ? 'up' : 'down';
     }
 
-    // Standard 4-Way Rating Mode
-    if (absX > absY) {
-      // Horizontal dominant
-      if (deltaX > 0) {
-        return { action: 'rate', rating: 4, label: '★ 4', cls: 'swipe-rate-4', dir: 'right' };
-      } else {
-        return { action: 'rate', rating: 3, label: '★ 3', cls: 'swipe-rate-3', dir: 'left' };
-      }
-    } else {
-      // Vertical dominant
-      if (deltaY < 0) {
-        return { action: 'rate', rating: 5, label: '★ 5', cls: 'swipe-rate-5', dir: 'up' };
-      } else {
-        return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'down' };
-      }
-    }
+    const map = this.getGestureMapFn() || {};
+    return this._resolveGestureAction(map[dir], dir);
   }
 
   _clearLongPressTimer() {
@@ -251,11 +274,15 @@ export class InputController {
           this.imgElement.style.transition = 'none';
         }
 
-        // Start Long-Press Undo timer (~450ms hold while not zoomed)
+        // Start Long-Press timer (~450ms hold while not zoomed)
         if (!this.isZoomedFn()) {
           this._longPressTimer = setTimeout(() => {
             this._longPressTimer = null;
             if (this.isSwiping || this.isZoomedFn()) return;
+
+            const map = this.getGestureMapFn() || {};
+            const intent = this._resolveGestureAction(map.longPress ?? 'undo', 'hold');
+            if (!intent) return;
 
             this.longPressTriggered = true;
             if (navigator.vibrate) {
@@ -266,13 +293,13 @@ export class InputController {
 
             if (this.swipeBadge) {
               clearTimeout(this._badgeHideTimer);
-              this.swipeBadge.textContent = '↺ UNDO';
-              this.swipeBadge.className = 'swipe-badge visible swipe-undo';
+              this.swipeBadge.textContent = intent.label;
+              this.swipeBadge.className = `swipe-badge visible ${intent.cls}`;
               this.swipeBadge.style.opacity = '1';
               this.swipeBadge.style.transform = 'translate(-50%, -50%) scale(1.05)';
             }
 
-            this.onUndo();
+            this._executeGestureIntent(intent);
           }, 450);
         }
       },
@@ -382,7 +409,7 @@ export class InputController {
         const intent = this._getSwipeIntent(deltaX, deltaY);
 
         if (intent && dist >= COMMIT_THRESHOLD && this.imgElement) {
-          // Fly out animation in the swipe direction before committing rating/skip
+          // Fly out animation in the swipe direction before committing action
           const flyX = intent.dir === 'right' ? 320 : intent.dir === 'left' ? -320 : deltaX;
           const flyY = intent.dir === 'down' ? 320 : intent.dir === 'up' ? -320 : deltaY;
 
@@ -392,11 +419,7 @@ export class InputController {
 
           this._pendingCommit = () => {
             this._resetCardTransform();
-            if (intent.action === 'skip') {
-              this.onSkip();
-            } else {
-              this.onRate(intent.rating);
-            }
+            this._executeGestureIntent(intent);
           };
           this._commitTimer = setTimeout(() => {
             this._flushPendingCommit();

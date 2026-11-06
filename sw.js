@@ -3,7 +3,7 @@
  * Caches static app shell assets for offline use.
  */
 
-const CACHE_NAME = 'darkcull-shell-v7';
+const CACHE_NAME = 'darkcull-shell-v8';
 const STATIC_ASSETS = [
   './',
   './index.html',

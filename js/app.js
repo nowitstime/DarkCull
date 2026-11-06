@@ -31,7 +31,13 @@ class DarkCullApp {
     this.currentIndex = 0;
     this._anchorPhoto = null; // Tracks current photo in shoot order for relative filter switching & session resume
     this.autoAdvance = true;
-    this.rejectSkipMode = false;
+    this.gestureMap = {
+      up: 'rate_5',
+      down: 'reject',
+      left: 'rate_3',
+      right: 'rate_4',
+      longPress: 'undo',
+    };
     this.undoStack = []; // History of rating/skip actions for Long-Press & Ctrl+Z Undo
     this.isSyncing = false;
     this.loadToken = 0; // bumped on every folder load; background workers stop when it changes
@@ -83,16 +89,8 @@ class DarkCullApp {
       swipeBadge: document.getElementById('swipeBadge'),
       loadingSpinner: document.getElementById('loadingSpinner'),
 
-      // Bottom Bar / Thumb Dock
+      // Bottom Bar / Thumb Dock (Prev / Next Navigation Arrows)
       bottomDock: document.getElementById('bottomDock'),
-      btnReject: document.getElementById('btnReject'),
-      btnRate0: document.getElementById('btnRate0'),
-      btnRate1: document.getElementById('btnRate1'),
-      btnRate2: document.getElementById('btnRate2'),
-      btnRate3: document.getElementById('btnRate3'),
-      btnRate4: document.getElementById('btnRate4'),
-      btnRate5: document.getElementById('btnRate5'),
-      btnSkip: document.getElementById('btnSkip'),
       btnPrev: document.getElementById('btnPrev'),
       btnNext: document.getElementById('btnNext'),
 
@@ -108,7 +106,13 @@ class DarkCullApp {
       manualTokenInput: document.getElementById('manualTokenInput'),
       saveManualTokenBtn: document.getElementById('saveManualTokenBtn'),
       clearManualTokenBtn: document.getElementById('clearManualTokenBtn'),
-      rejectSkipModeToggle: document.getElementById('rejectSkipModeToggle'),
+      gestureUpSelect: document.getElementById('gestureUpSelect'),
+      gestureDownSelect: document.getElementById('gestureDownSelect'),
+      gestureLeftSelect: document.getElementById('gestureLeftSelect'),
+      gestureRightSelect: document.getElementById('gestureRightSelect'),
+      gestureHoldSelect: document.getElementById('gestureHoldSelect'),
+      presetStarsBtn: document.getElementById('presetStarsBtn'),
+      presetRejectSkipBtn: document.getElementById('presetRejectSkipBtn'),
       autoAdvanceToggle: document.getElementById('autoAdvanceToggle'),
       cacheEntireShootBtn: document.getElementById('cacheEntireShootBtn'),
       clearCacheBtn: document.getElementById('clearCacheBtn'),
@@ -164,24 +168,39 @@ class DarkCullApp {
       this.dom.autoAdvanceToggle.checked = this.autoAdvance;
     }
 
-    const savedRejectSkip = localStorage.getItem('darkcull_reject_skip_mode');
-    this.rejectSkipMode = savedRejectSkip === 'true';
-    if (this.dom.rejectSkipModeToggle) {
-      this.dom.rejectSkipModeToggle.checked = this.rejectSkipMode;
+    try {
+      const rawMap = localStorage.getItem('darkcull_gesture_map');
+      if (rawMap) {
+        const parsed = JSON.parse(rawMap);
+        this.gestureMap = { ...this.gestureMap, ...parsed };
+      } else if (localStorage.getItem('darkcull_reject_skip_mode') === 'true') {
+        this.gestureMap = {
+          up: 'skip',
+          down: 'reject',
+          left: 'reject',
+          right: 'skip',
+          longPress: 'undo',
+        };
+      }
+    } catch (e) {
+      console.warn('Could not load saved gesture map:', e);
     }
-    this._applyRejectSkipModeUI();
+    this._syncGestureSelectsUI();
   }
 
-  _applyRejectSkipModeUI() {
-    if (this.dom.bottomDock) {
-      this.dom.bottomDock.classList.toggle('reject-skip-mode', this.rejectSkipMode);
-    }
-    if (this.dom.btnSkip) {
-      this.dom.btnSkip.style.display = this.rejectSkipMode ? 'inline-flex' : 'none';
-    }
-    const starBtns = [this.dom.btnRate0, this.dom.btnRate3, this.dom.btnRate4, this.dom.btnRate5];
-    for (const btn of starBtns) {
-      if (btn) btn.style.display = this.rejectSkipMode ? 'none' : 'inline-flex';
+  _syncGestureSelectsUI() {
+    if (this.dom.gestureUpSelect) this.dom.gestureUpSelect.value = this.gestureMap.up;
+    if (this.dom.gestureDownSelect) this.dom.gestureDownSelect.value = this.gestureMap.down;
+    if (this.dom.gestureLeftSelect) this.dom.gestureLeftSelect.value = this.gestureMap.left;
+    if (this.dom.gestureRightSelect) this.dom.gestureRightSelect.value = this.gestureMap.right;
+    if (this.dom.gestureHoldSelect) this.dom.gestureHoldSelect.value = this.gestureMap.longPress;
+  }
+
+  _saveGestureMap() {
+    try {
+      localStorage.setItem('darkcull_gesture_map', JSON.stringify(this.gestureMap));
+    } catch (e) {
+      console.warn('Failed to save gesture map:', e);
     }
   }
 
@@ -207,7 +226,7 @@ class DarkCullApp {
       imgElement: this.dom.mainImg,
       swipeBadge: this.dom.swipeBadge,
       isZoomedFn: () => this.viewportEngine.isZoomed,
-      isRejectSkipModeFn: () => this.rejectSkipMode,
+      getGestureMapFn: () => this.gestureMap,
       onNext: () => this.nextPhoto(),
       onPrev: () => this.prevPhoto(),
       onRate: (rating) => this.setRating(rating),
@@ -228,16 +247,7 @@ class DarkCullApp {
       });
     });
 
-    // Rating buttons (Thumb Dock)
-    this.dom.btnReject.addEventListener('click', () => this.setRating(-1));
-    this.dom.btnRate0.addEventListener('click', () => this.setRating(0));
-    if (this.dom.btnRate1) this.dom.btnRate1.addEventListener('click', () => this.setRating(1));
-    if (this.dom.btnRate2) this.dom.btnRate2.addEventListener('click', () => this.setRating(2));
-    this.dom.btnRate3.addEventListener('click', () => this.setRating(3));
-    this.dom.btnRate4.addEventListener('click', () => this.setRating(4));
-    this.dom.btnRate5.addEventListener('click', () => this.setRating(5));
-    if (this.dom.btnSkip) this.dom.btnSkip.addEventListener('click', () => this.skipPhoto());
-
+    // Bottom Dock Navigation Arrows
     if (this.dom.btnPrev) this.dom.btnPrev.addEventListener('click', () => this.prevPhoto());
     if (this.dom.btnNext) this.dom.btnNext.addEventListener('click', () => this.nextPhoto());
 
@@ -280,16 +290,52 @@ class DarkCullApp {
       });
     }
 
-    if (this.dom.rejectSkipModeToggle) {
-      this.dom.rejectSkipModeToggle.addEventListener('change', (e) => {
-        this.rejectSkipMode = e.target.checked;
-        localStorage.setItem('darkcull_reject_skip_mode', this.rejectSkipMode);
-        this._applyRejectSkipModeUI();
-        this.showToast(
-          this.rejectSkipMode
-            ? 'Reject / Skip Mode ON (Swipe Right/Up = Skip, Left/Down = Reject)'
-            : '4-Way Star Rating Mode ON'
-        );
+    // Customizable Gesture Select Dropdowns
+    const gestureSelects = [
+      this.dom.gestureUpSelect,
+      this.dom.gestureDownSelect,
+      this.dom.gestureLeftSelect,
+      this.dom.gestureRightSelect,
+      this.dom.gestureHoldSelect,
+    ];
+    for (const sel of gestureSelects) {
+      if (!sel) continue;
+      sel.addEventListener('change', (e) => {
+        const key = e.target.dataset.gesture;
+        if (key) {
+          this.gestureMap[key] = e.target.value;
+          this._saveGestureMap();
+        }
+      });
+    }
+
+    if (this.dom.presetStarsBtn) {
+      this.dom.presetStarsBtn.addEventListener('click', () => {
+        this.gestureMap = {
+          ...this.gestureMap,
+          up: 'rate_5',
+          down: 'reject',
+          left: 'rate_3',
+          right: 'rate_4',
+        };
+        this._syncGestureSelectsUI();
+        this._saveGestureMap();
+        this.showToast('Applied 4-Way Stars preset');
+      });
+    }
+
+    if (this.dom.presetRejectSkipBtn) {
+      this.dom.presetRejectSkipBtn.addEventListener('click', () => {
+        this.gestureMap = {
+          ...this.gestureMap,
+          up: 'skip',
+          down: 'reject',
+          left: 'reject',
+          right: 'skip',
+        };
+        this._syncGestureSelectsUI();
+        this._saveGestureMap();
+        this.showToast('Applied Reject / Skip preset');
       });
     }
 
@@ -1153,29 +1199,6 @@ class DarkCullApp {
     } else {
       badge.textContent = `★ ${photo.rating}`;
       badge.className = `hud-badge badge-rated rate-${photo.rating}`;
-    }
-
-    // Highlight active rating button on bottom dock
-    const ratingButtons = [
-      this.dom.btnReject,
-      this.dom.btnRate0,
-      this.dom.btnRate1,
-      this.dom.btnRate2,
-      this.dom.btnRate3,
-      this.dom.btnRate4,
-      this.dom.btnRate5,
-    ];
-    ratingButtons.forEach((btn) => {
-      if (btn) btn.classList.remove('btn-active');
-    });
-
-    if (photo.rating === -1) {
-      this.dom.btnReject.classList.add('btn-active');
-    } else if (!photo.rating || photo.rating === 0) {
-      this.dom.btnRate0.classList.add('btn-active');
-    } else {
-      const btn = this.dom[`btnRate${photo.rating}`];
-      if (btn) btn.classList.add('btn-active');
     }
   }
 

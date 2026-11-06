@@ -127,41 +127,14 @@
       </div>
     </main>
 
-    <!-- Persistent Bottom Thumb Dock -->
+    <!-- Persistent Bottom Thumb Dock (Navigation Arrows Only) -->
     <footer id="bottomDock" class="bottom-dock">
       <button id="btnPrev" class="dock-btn dock-nav-btn" title="Previous (A / Left Arrow)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-      </button>
-
-      <button id="btnReject" class="dock-btn btn-reject" title="Reject (X / Delete)">
-        ✕ Reject
-      </button>
-
-      <button id="btnRate0" class="dock-btn dock-star-mode" title="Unrated (0)">
-        ★0
-      </button>
-
-      <button id="btnRate1" class="dock-btn btn-star" title="1 Star (1)" style="display: none;">★1</button>
-      <button id="btnRate2" class="dock-btn btn-star" title="2 Stars (2)" style="display: none;">★2</button>
-
-      <button id="btnRate3" class="dock-btn btn-star dock-star-mode" title="3 Stars (3)">
-        ★3
-      </button>
-
-      <button id="btnRate4" class="dock-btn btn-star dock-star-mode" title="4 Stars (4)">
-        ★4
-      </button>
-
-      <button id="btnRate5" class="dock-btn btn-star dock-star-mode" title="5 Stars (5)">
-        ★5
-      </button>
-
-      <button id="btnSkip" class="dock-btn btn-skip dock-skip-mode" title="Skip / Keep Photo (Space / Right)" style="display: none;">
-        Skip ➔
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
 
       <button id="btnNext" class="dock-btn dock-nav-btn" title="Next (D / Right Arrow)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
     </footer>
 
@@ -183,7 +156,7 @@
           </div>
         </div>
 
-        <div class="form-group" style="border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; background: rgba(255, 255, 255, 0.02);">
+        <div class="form-group" style="border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; background: rgba(255, 255, 255, 255, 0.02);">
           <label>Option 2: Direct OAuth Access Token (Temporary / Advanced)</label>
           <input type="text" id="manualTokenInput" placeholder="ya29.a0AfH6SM..." />
           <span class="form-hint">Paste an active OAuth Bearer token directly (e.g. from Google OAuth Playground). Stored in localStorage on this device only.</span>
@@ -193,12 +166,101 @@
           </div>
         </div>
 
-        <div class="toggle-group">
-          <div>
-            <div style="font-weight: 600;">Reject / Skip Mode</div>
-            <div class="form-hint" style="margin-top: 2px;">Fast 2-way pass: Swipe Left/Down = Reject (✕), Swipe Right/Up = Skip (➔)</div>
+        <div class="form-group gesture-config-box">
+          <div class="gesture-config-header">
+            <label style="margin: 0;">Touch Swipe &amp; Long-Press Controls</label>
+            <div class="gesture-presets">
+              <button type="button" id="presetStarsBtn" class="preset-chip" title="Up: ★5, Down: Reject, Left: ★3, Right: ★4, Hold: Undo">4-Way Stars</button>
+              <button type="button" id="presetRejectSkipBtn" class="preset-chip" title="Up/Right: Skip, Down/Left: Reject, Hold: Undo">Reject / Skip</button>
+            </div>
           </div>
-          <input type="checkbox" id="rejectSkipModeToggle" style="width: 18px; height: 18px; cursor: pointer; flex-shrink: 0;" />
+
+          <div class="gesture-grid">
+            <div class="gesture-row">
+              <span class="gesture-label">↑ Swipe Up</span>
+              <select id="gestureUpSelect" class="gesture-select" data-gesture="up">
+                <option value="skip">➔ Skip (Next)</option>
+                <option value="back">⬅ Back (Previous)</option>
+                <option value="undo">↺ Undo</option>
+                <option value="reject">✕ Reject (-1)</option>
+                <option value="rate_1">★ 1 Star</option>
+                <option value="rate_2">★ 2 Stars</option>
+                <option value="rate_3">★ 3 Stars</option>
+                <option value="rate_4">★ 4 Stars</option>
+                <option value="rate_5">★ 5 Stars</option>
+                <option value="rate_0">★ 0 Clear Rating</option>
+                <option value="none">— Disabled</option>
+              </select>
+            </div>
+
+            <div class="gesture-row">
+              <span class="gesture-label">↓ Swipe Down</span>
+              <select id="gestureDownSelect" class="gesture-select" data-gesture="down">
+                <option value="skip">➔ Skip (Next)</option>
+                <option value="back">⬅ Back (Previous)</option>
+                <option value="undo">↺ Undo</option>
+                <option value="reject">✕ Reject (-1)</option>
+                <option value="rate_1">★ 1 Star</option>
+                <option value="rate_2">★ 2 Stars</option>
+                <option value="rate_3">★ 3 Stars</option>
+                <option value="rate_4">★ 4 Stars</option>
+                <option value="rate_5">★ 5 Stars</option>
+                <option value="rate_0">★ 0 Clear Rating</option>
+                <option value="none">— Disabled</option>
+              </select>
+            </div>
+
+            <div class="gesture-row">
+              <span class="gesture-label">← Swipe Left</span>
+              <select id="gestureLeftSelect" class="gesture-select" data-gesture="left">
+                <option value="skip">➔ Skip (Next)</option>
+                <option value="back">⬅ Back (Previous)</option>
+                <option value="undo">↺ Undo</option>
+                <option value="reject">✕ Reject (-1)</option>
+                <option value="rate_1">★ 1 Star</option>
+                <option value="rate_2">★ 2 Stars</option>
+                <option value="rate_3">★ 3 Stars</option>
+                <option value="rate_4">★ 4 Stars</option>
+                <option value="rate_5">★ 5 Stars</option>
+                <option value="rate_0">★ 0 Clear Rating</option>
+                <option value="none">— Disabled</option>
+              </select>
+            </div>
+
+            <div class="gesture-row">
+              <span class="gesture-label">→ Swipe Right</span>
+              <select id="gestureRightSelect" class="gesture-select" data-gesture="right">
+                <option value="skip">➔ Skip (Next)</option>
+                <option value="back">⬅ Back (Previous)</option>
+                <option value="undo">↺ Undo</option>
+                <option value="reject">✕ Reject (-1)</option>
+                <option value="rate_1">★ 1 Star</option>
+                <option value="rate_2">★ 2 Stars</option>
+                <option value="rate_3">★ 3 Stars</option>
+                <option value="rate_4">★ 4 Stars</option>
+                <option value="rate_5">★ 5 Stars</option>
+                <option value="rate_0">★ 0 Clear Rating</option>
+                <option value="none">— Disabled</option>
+              </select>
+            </div>
+
+            <div class="gesture-row">
+              <span class="gesture-label">⏱ Hold Picture</span>
+              <select id="gestureHoldSelect" class="gesture-select" data-gesture="longPress">
+                <option value="undo">↺ Undo</option>
+                <option value="skip">➔ Skip (Next)</option>
+                <option value="back">⬅ Back (Previous)</option>
+                <option value="reject">✕ Reject (-1)</option>
+                <option value="rate_1">★ 1 Star</option>
+                <option value="rate_2">★ 2 Stars</option>
+                <option value="rate_3">★ 3 Stars</option>
+                <option value="rate_4">★ 4 Stars</option>
+                <option value="rate_5">★ 5 Stars</option>
+                <option value="rate_0">★ 0 Clear Rating</option>
+                <option value="none">— Disabled</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="toggle-group">
@@ -221,14 +283,12 @@
         </div>
 
         <div class="form-group" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
-          <label>Touch Gestures &amp; Shortcuts</label>
+          <label>Keyboard Shortcuts &amp; Zoom</label>
           <div class="form-hint" style="line-height: 1.8;">
-            <strong>Hold Picture (Long-Press)</strong> / <code>U</code> / <code>Ctrl+Z</code>: Undo previous action<br/>
             <strong>Double-Tap</strong> / <code>Space</code> / <code>Z</code>: Toggle 100% 1:1 focus zoom<br/>
-            <code>D</code> / <code>Right Arrow</code> / <code>J</code>: Next photo<br/>
-            <code>A</code> / <code>Left Arrow</code> / <code>K</code>: Previous photo<br/>
-            <code>1-5</code>: Rate photo &amp; auto-advance · <code>0</code>: Clear · <code>X</code>: Reject (-1)<br/>
-            <code>F</code>: Toggle Fullscreen
+            <code>U</code> / <code>Ctrl+Z</code>: Undo previous action<br/>
+            <code>D</code> / <code>Right Arrow</code> / <code>J</code>: Next photo · <code>A</code> / <code>Left Arrow</code> / <code>K</code>: Previous photo<br/>
+            <code>1-5</code>: Rate photo &amp; auto-advance · <code>0</code>: Clear · <code>X</code>: Reject (-1) · <code>F</code>: Fullscreen
           </div>
         </div>
       </div>
