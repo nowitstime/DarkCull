@@ -75,13 +75,13 @@
         </div>
 
         <div class="filter-group" style="pointer-events: auto;">
-          <button class="filter-pill active" data-filter="not-rejected" title="Unrated & Rated (Excludes Rejected)">Not Rejected</button>
-          <button class="filter-pill" data-filter="unrated" title="Unrated Photos Only">Unrated</button>
-          <button class="filter-pill" data-filter="3" title="3 Stars">★3</button>
-          <button class="filter-pill" data-filter="4" title="4 Stars">★4</button>
-          <button class="filter-pill" data-filter="5" title="5 Stars">★5</button>
-          <button class="filter-pill" data-filter="rejected" title="Rejected Photos">Rejected</button>
-          <button class="filter-pill" data-filter="all" title="Every Photo Including Rejected">All</button>
+          <button class="filter-pill active" data-filter="not-rejected" title="Unrated & Rated (Excludes Rejected)">Keep <span id="filterCountNotRejected" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="unrated" title="Unrated Photos Only">Unrated <span id="filterCountUnrated" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="3" title="3 Stars">★3 <span id="filterCount3" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="4" title="4 Stars">★4 <span id="filterCount4" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="5" title="5 Stars">★5 <span id="filterCount5" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="rejected" title="Rejected Photos">✕ <span id="filterCountRejected" class="filter-count">0</span></button>
+          <button class="filter-pill" data-filter="all" title="Every Photo Including Rejected">All <span id="filterCountAll" class="filter-count">0</span></button>
         </div>
       </div>
 
@@ -128,7 +128,7 @@
     </main>
 
     <!-- Persistent Bottom Thumb Dock -->
-    <footer class="bottom-dock">
+    <footer id="bottomDock" class="bottom-dock">
       <button id="btnPrev" class="dock-btn dock-nav-btn" title="Previous (A / Left Arrow)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
@@ -137,23 +137,27 @@
         ✕ Reject
       </button>
 
-      <button id="btnRate0" class="dock-btn" title="Unrated (0)">
+      <button id="btnRate0" class="dock-btn dock-star-mode" title="Unrated (0)">
         ★0
       </button>
 
       <button id="btnRate1" class="dock-btn btn-star" title="1 Star (1)" style="display: none;">★1</button>
       <button id="btnRate2" class="dock-btn btn-star" title="2 Stars (2)" style="display: none;">★2</button>
 
-      <button id="btnRate3" class="dock-btn btn-star" title="3 Stars (3)">
+      <button id="btnRate3" class="dock-btn btn-star dock-star-mode" title="3 Stars (3)">
         ★3
       </button>
 
-      <button id="btnRate4" class="dock-btn btn-star" title="4 Stars (4)">
+      <button id="btnRate4" class="dock-btn btn-star dock-star-mode" title="4 Stars (4)">
         ★4
       </button>
 
-      <button id="btnRate5" class="dock-btn btn-star" title="5 Stars (5)">
+      <button id="btnRate5" class="dock-btn btn-star dock-star-mode" title="5 Stars (5)">
         ★5
+      </button>
+
+      <button id="btnSkip" class="dock-btn btn-skip dock-skip-mode" title="Skip / Keep Photo (Space / Right)" style="display: none;">
+        Skip ➔
       </button>
 
       <button id="btnNext" class="dock-btn dock-nav-btn" title="Next (D / Right Arrow)">
@@ -190,6 +194,14 @@
         </div>
 
         <div class="toggle-group">
+          <div>
+            <div style="font-weight: 600;">Reject / Skip Mode</div>
+            <div class="form-hint" style="margin-top: 2px;">Fast 2-way pass: Swipe Left/Down = Reject (✕), Swipe Right/Up = Skip (➔)</div>
+          </div>
+          <input type="checkbox" id="rejectSkipModeToggle" style="width: 18px; height: 18px; cursor: pointer; flex-shrink: 0;" />
+        </div>
+
+        <div class="toggle-group">
           <span>Auto-advance on rate</span>
           <input type="checkbox" id="autoAdvanceToggle" checked style="width: 18px; height: 18px; cursor: pointer;" />
         </div>
@@ -209,14 +221,13 @@
         </div>
 
         <div class="form-group" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
-          <label>Keyboard Shortcuts</label>
+          <label>Touch Gestures &amp; Shortcuts</label>
           <div class="form-hint" style="line-height: 1.8;">
+            <strong>Hold Picture (Long-Press)</strong> / <code>U</code> / <code>Ctrl+Z</code>: Undo previous action<br/>
+            <strong>Double-Tap</strong> / <code>Space</code> / <code>Z</code>: Toggle 100% 1:1 focus zoom<br/>
             <code>D</code> / <code>Right Arrow</code> / <code>J</code>: Next photo<br/>
             <code>A</code> / <code>Left Arrow</code> / <code>K</code>: Previous photo<br/>
-            <code>1-5</code>: Rate photo & auto-advance<br/>
-            <code>0</code>: Clear rating<br/>
-            <code>X</code> / <code>Backspace</code>: Reject photo (-1)<br/>
-            <code>Space</code> / <code>Z</code>: Toggle 100% focus check zoom<br/>
+            <code>1-5</code>: Rate photo &amp; auto-advance · <code>0</code>: Clear · <code>X</code>: Reject (-1)<br/>
             <code>F</code>: Toggle Fullscreen
           </div>
         </div>

@@ -7,14 +7,20 @@
  * - 3, 4, 5 (and Numpad 3-5): Set star rating (with optional auto-advance)
  * - 0 (and Numpad 0): Clear rating / Unrated (0)
  * - X / Backspace / Delete: Reject (-1)
+ * - U / Ctrl+Z / Cmd+Z: Undo previous action
  * - Space / Z: Toggle 100% 1:1 focus check zoom
  * - F: Toggle Fullscreen
  *
- * Mobile Touch Ergonomics (Tinder-style 4-way Rating Swipes + Double Tap Zoom):
- * - Drag / Swipe Up: Rate ★5
- * - Drag / Swipe Right: Rate ★4
- * - Drag / Swipe Left: Rate ★3
- * - Drag / Swipe Down: Reject (✕ / -1)
+ * Mobile Touch Ergonomics:
+ * - 4-Way Rating Mode:
+ *   - Swipe Up: Rate ★5
+ *   - Swipe Right: Rate ★4
+ *   - Swipe Left: Rate ★3
+ *   - Swipe Down: Reject (✕ / -1)
+ * - Reject / Skip Mode:
+ *   - Swipe Right / Up: Skip / Keep (➔)
+ *   - Swipe Left / Down: Reject (✕ / -1)
+ * - Hold Picture (Long-Press ~450ms): Undo previous rating/skip
  * - Double Tap: Toggle 100% 1:1 zoom at tap coordinates
  */
 
@@ -23,9 +29,12 @@ export class InputController {
     this.onNext = handlers.onNext || (() => {});
     this.onPrev = handlers.onPrev || (() => {});
     this.onRate = handlers.onRate || (() => {}); // (rating) => {}
+    this.onSkip = handlers.onSkip || (() => {}); // () => {}
+    this.onUndo = handlers.onUndo || (() => {}); // () => {}
     this.onToggleZoom = handlers.onToggleZoom || (() => {}); // (x, y) => {}
     this.onToggleFullscreen = handlers.onToggleFullscreen || (() => {});
     this.isZoomedFn = handlers.isZoomedFn || (() => false);
+    this.isRejectSkipModeFn = handlers.isRejectSkipModeFn || (() => false);
 
     this.touchContainer = handlers.touchContainer || null;
     this.imgElement = handlers.imgElement || null;
@@ -36,6 +45,9 @@ export class InputController {
     this.touchStartY = 0;
     this.touchStartTime = 0;
     this.isSwiping = false;
+    this.longPressTriggered = false;
+    this._longPressTimer = null;
+    this._badgeHideTimer = null;
     this.lastTapTime = 0;
     this.lastTapX = 0;
     this.lastTapY = 0;
@@ -60,6 +72,17 @@ export class InputController {
       const key = e.key;
       const code = e.code;
 
+      // 0. Undo: Ctrl+Z / Cmd+Z or U
+      if (
+        ((e.ctrlKey || e.metaKey) && (key === 'z' || key === 'Z')) ||
+        key === 'u' ||
+        key === 'U'
+      ) {
+        e.preventDefault();
+        this.onUndo();
+        return;
+      }
+
       // 1. Navigation: Next (Right Arrow, D, J)
       if (key === 'ArrowRight' || key === 'd' || key === 'D' || key === 'j' || key === 'J') {
         e.preventDefault();
@@ -74,7 +97,7 @@ export class InputController {
         return;
       }
 
-      // 3. Ratings 3-5 (or 1-5 on keyboard)
+      // 3. Ratings 1-5 (and Numpad 1-5)
       if (
         ['1', '2', '3', '4', '5'].includes(key) ||
         ['Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5'].includes(code)
@@ -127,20 +150,46 @@ export class InputController {
 
     if (dist < 30) return null;
 
+    if (this.isRejectSkipModeFn()) {
+      // Fast 2-way Reject / Skip mode:
+      // Right or Up = Skip (Keep), Left or Down = Reject (-1)
+      if (absX > absY) {
+        if (deltaX > 0) {
+          return { action: 'skip', label: '➔ SKIP', cls: 'swipe-skip', dir: 'right' };
+        } else {
+          return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'left' };
+        }
+      } else {
+        if (deltaY < 0) {
+          return { action: 'skip', label: '➔ SKIP', cls: 'swipe-skip', dir: 'up' };
+        } else {
+          return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'down' };
+        }
+      }
+    }
+
+    // Standard 4-Way Rating Mode
     if (absX > absY) {
       // Horizontal dominant
       if (deltaX > 0) {
-        return { rating: 4, label: '★ 4', cls: 'swipe-rate-4', dir: 'right' };
+        return { action: 'rate', rating: 4, label: '★ 4', cls: 'swipe-rate-4', dir: 'right' };
       } else {
-        return { rating: 3, label: '★ 3', cls: 'swipe-rate-3', dir: 'left' };
+        return { action: 'rate', rating: 3, label: '★ 3', cls: 'swipe-rate-3', dir: 'left' };
       }
     } else {
       // Vertical dominant
       if (deltaY < 0) {
-        return { rating: 5, label: '★ 5', cls: 'swipe-rate-5', dir: 'up' };
+        return { action: 'rate', rating: 5, label: '★ 5', cls: 'swipe-rate-5', dir: 'up' };
       } else {
-        return { rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'down' };
+        return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir: 'down' };
       }
+    }
+  }
+
+  _clearLongPressTimer() {
+    if (this._longPressTimer) {
+      clearTimeout(this._longPressTimer);
+      this._longPressTimer = null;
     }
   }
 
@@ -159,11 +208,19 @@ export class InputController {
   _setupTouchGestures() {
     if (!this.touchContainer) return;
 
+    // Prevent mobile browser native long-press image menu ("Download image / Share image")
+    this.touchContainer.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
     this.touchContainer.addEventListener(
       'touchstart',
       (e) => {
+        this._clearLongPressTimer();
+
         if (e.touches.length !== 1) {
           this.isSwiping = false;
+          this.longPressTriggered = false;
           this._resetCardTransform();
           return;
         }
@@ -173,9 +230,35 @@ export class InputController {
         this.touchStartY = touch.clientY;
         this.touchStartTime = Date.now();
         this.isSwiping = false;
+        this.longPressTriggered = false;
 
         if (this.imgElement && !this.isZoomedFn()) {
           this.imgElement.style.transition = 'none';
+        }
+
+        // Start Long-Press Undo timer (~450ms hold while not zoomed)
+        if (!this.isZoomedFn()) {
+          this._longPressTimer = setTimeout(() => {
+            this._longPressTimer = null;
+            if (this.isSwiping || this.isZoomedFn()) return;
+
+            this.longPressTriggered = true;
+            if (navigator.vibrate) {
+              try {
+                navigator.vibrate(40);
+              } catch (_) {}
+            }
+
+            if (this.swipeBadge) {
+              clearTimeout(this._badgeHideTimer);
+              this.swipeBadge.textContent = '↺ UNDO';
+              this.swipeBadge.className = 'swipe-badge visible swipe-undo';
+              this.swipeBadge.style.opacity = '1';
+              this.swipeBadge.style.transform = 'translate(-50%, -50%) scale(1.05)';
+            }
+
+            this.onUndo();
+          }, 450);
         }
       },
       { passive: true }
@@ -184,9 +267,16 @@ export class InputController {
     this.touchContainer.addEventListener(
       'touchmove',
       (e) => {
+        if (this.longPressTriggered) {
+          if (e.cancelable) e.preventDefault();
+          return;
+        }
+
         // When zoomed in, ViewportEngine handles 1:1 panning; do not swipe-rate
-        if (this.isZoomedFn() || e.touches.length !== 1) return;
-        if (!this.imgElement || this.imgElement.style.display === 'none') return;
+        if (this.isZoomedFn() || e.touches.length !== 1) {
+          this._clearLongPressTimer();
+          return;
+        }
 
         const touch = e.touches[0];
         const deltaX = touch.clientX - this.touchStartX;
@@ -194,6 +284,9 @@ export class InputController {
         const dist = Math.hypot(deltaX, deltaY);
 
         if (dist > 12) {
+          this._clearLongPressTimer();
+          if (!this.imgElement || this.imgElement.style.display === 'none') return;
+
           this.isSwiping = true;
           if (e.cancelable) e.preventDefault();
 
@@ -222,6 +315,17 @@ export class InputController {
     this.touchContainer.addEventListener(
       'touchend',
       (e) => {
+        this._clearLongPressTimer();
+
+        if (this.longPressTriggered) {
+          this.longPressTriggered = false;
+          this.isSwiping = false;
+          this._badgeHideTimer = setTimeout(() => {
+            this._resetCardTransform();
+          }, 260);
+          return;
+        }
+
         if (e.changedTouches.length !== 1) return;
 
         const touch = e.changedTouches[0];
@@ -258,12 +362,12 @@ export class InputController {
           return;
         }
 
-        // 3. Evaluate Tinder-style 4-way swipe threshold (75px)
+        // 3. Evaluate swipe commit threshold (75px)
         const COMMIT_THRESHOLD = 75;
         const intent = this._getSwipeIntent(deltaX, deltaY);
 
         if (intent && dist >= COMMIT_THRESHOLD && this.imgElement) {
-          // Fly out animation in the swipe direction before committing rating
+          // Fly out animation in the swipe direction before committing rating/skip
           const flyX = intent.dir === 'right' ? 320 : intent.dir === 'left' ? -320 : deltaX;
           const flyY = intent.dir === 'down' ? 320 : intent.dir === 'up' ? -320 : deltaY;
 
@@ -273,7 +377,11 @@ export class InputController {
 
           setTimeout(() => {
             this._resetCardTransform();
-            this.onRate(intent.rating);
+            if (intent.action === 'skip') {
+              this.onSkip();
+            } else {
+              this.onRate(intent.rating);
+            }
           }, 120);
         } else {
           // Snap back to center
@@ -286,6 +394,8 @@ export class InputController {
     );
 
     this.touchContainer.addEventListener('touchcancel', () => {
+      this._clearLongPressTimer();
+      this.longPressTriggered = false;
       this.isSwiping = false;
       this._resetCardTransform();
     });

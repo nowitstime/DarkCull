@@ -30,6 +30,8 @@ class DarkCullApp {
     this.activeFilter = 'not-rejected'; // 'not-rejected' | 'unrated' | '3' | '4' | '5' | 'rejected' | 'all'
     this.currentIndex = 0;
     this.autoAdvance = true;
+    this.rejectSkipMode = false;
+    this.undoStack = []; // History of rating/skip actions for Long-Press & Ctrl+Z Undo
     this.isSyncing = false;
     this.loadToken = 0; // bumped on every folder load; background workers stop when it changes
     this._cachingToken = null;
@@ -59,6 +61,13 @@ class DarkCullApp {
       tally4: document.getElementById('tally4'),
       tally5: document.getElementById('tally5'),
       tallyRejected: document.getElementById('tallyRejected'),
+      filterCountNotRejected: document.getElementById('filterCountNotRejected'),
+      filterCountUnrated: document.getElementById('filterCountUnrated'),
+      filterCount3: document.getElementById('filterCount3'),
+      filterCount4: document.getElementById('filterCount4'),
+      filterCount5: document.getElementById('filterCount5'),
+      filterCountRejected: document.getElementById('filterCountRejected'),
+      filterCountAll: document.getElementById('filterCountAll'),
       filterPills: document.querySelectorAll('.filter-pill'),
 
       // Viewport
@@ -72,6 +81,7 @@ class DarkCullApp {
       loadingSpinner: document.getElementById('loadingSpinner'),
 
       // Bottom Bar / Thumb Dock
+      bottomDock: document.getElementById('bottomDock'),
       btnReject: document.getElementById('btnReject'),
       btnRate0: document.getElementById('btnRate0'),
       btnRate1: document.getElementById('btnRate1'),
@@ -79,6 +89,7 @@ class DarkCullApp {
       btnRate3: document.getElementById('btnRate3'),
       btnRate4: document.getElementById('btnRate4'),
       btnRate5: document.getElementById('btnRate5'),
+      btnSkip: document.getElementById('btnSkip'),
       btnPrev: document.getElementById('btnPrev'),
       btnNext: document.getElementById('btnNext'),
 
@@ -94,6 +105,7 @@ class DarkCullApp {
       manualTokenInput: document.getElementById('manualTokenInput'),
       saveManualTokenBtn: document.getElementById('saveManualTokenBtn'),
       clearManualTokenBtn: document.getElementById('clearManualTokenBtn'),
+      rejectSkipModeToggle: document.getElementById('rejectSkipModeToggle'),
       autoAdvanceToggle: document.getElementById('autoAdvanceToggle'),
       cacheEntireShootBtn: document.getElementById('cacheEntireShootBtn'),
       clearCacheBtn: document.getElementById('clearCacheBtn'),
@@ -148,6 +160,26 @@ class DarkCullApp {
     if (this.dom.autoAdvanceToggle) {
       this.dom.autoAdvanceToggle.checked = this.autoAdvance;
     }
+
+    const savedRejectSkip = localStorage.getItem('darkcull_reject_skip_mode');
+    this.rejectSkipMode = savedRejectSkip === 'true';
+    if (this.dom.rejectSkipModeToggle) {
+      this.dom.rejectSkipModeToggle.checked = this.rejectSkipMode;
+    }
+    this._applyRejectSkipModeUI();
+  }
+
+  _applyRejectSkipModeUI() {
+    if (this.dom.bottomDock) {
+      this.dom.bottomDock.classList.toggle('reject-skip-mode', this.rejectSkipMode);
+    }
+    if (this.dom.btnSkip) {
+      this.dom.btnSkip.style.display = this.rejectSkipMode ? 'inline-flex' : 'none';
+    }
+    const starBtns = [this.dom.btnRate0, this.dom.btnRate3, this.dom.btnRate4, this.dom.btnRate5];
+    for (const btn of starBtns) {
+      if (btn) btn.style.display = this.rejectSkipMode ? 'none' : 'inline-flex';
+    }
   }
 
   _initViewportEngine() {
@@ -172,9 +204,12 @@ class DarkCullApp {
       imgElement: this.dom.mainImg,
       swipeBadge: this.dom.swipeBadge,
       isZoomedFn: () => this.viewportEngine.isZoomed,
+      isRejectSkipModeFn: () => this.rejectSkipMode,
       onNext: () => this.nextPhoto(),
       onPrev: () => this.prevPhoto(),
       onRate: (rating) => this.setRating(rating),
+      onSkip: () => this.skipPhoto(),
+      onUndo: () => this.undoLastAction(),
       onToggleZoom: (x, y) => this.viewportEngine.toggleZoom(x, y),
       onToggleFullscreen: () => this.toggleFullscreen(),
     });
@@ -198,6 +233,7 @@ class DarkCullApp {
     this.dom.btnRate3.addEventListener('click', () => this.setRating(3));
     this.dom.btnRate4.addEventListener('click', () => this.setRating(4));
     this.dom.btnRate5.addEventListener('click', () => this.setRating(5));
+    if (this.dom.btnSkip) this.dom.btnSkip.addEventListener('click', () => this.skipPhoto());
 
     if (this.dom.btnPrev) this.dom.btnPrev.addEventListener('click', () => this.prevPhoto());
     if (this.dom.btnNext) this.dom.btnNext.addEventListener('click', () => this.nextPhoto());
@@ -238,6 +274,19 @@ class DarkCullApp {
         driveService.setManualToken('');
         this.dom.manualTokenInput.value = '';
         this.showToast('Access Token cleared.');
+      });
+    }
+
+    if (this.dom.rejectSkipModeToggle) {
+      this.dom.rejectSkipModeToggle.addEventListener('change', (e) => {
+        this.rejectSkipMode = e.target.checked;
+        localStorage.setItem('darkcull_reject_skip_mode', this.rejectSkipMode);
+        this._applyRejectSkipModeUI();
+        this.showToast(
+          this.rejectSkipMode
+            ? 'Reject / Skip Mode ON (Swipe Right/Up = Skip, Left/Down = Reject)'
+            : '4-Way Star Rating Mode ON'
+        );
       });
     }
 
@@ -939,12 +988,23 @@ class DarkCullApp {
       else unrated++;
     }
 
-    if (this.dom.tallyTotal) this.dom.tallyTotal.textContent = this.allPhotos.length;
+    const total = this.allPhotos.length;
+    const notRejected = total - rejected;
+
+    if (this.dom.tallyTotal) this.dom.tallyTotal.textContent = total;
     if (this.dom.tallyUnrated) this.dom.tallyUnrated.textContent = unrated;
     if (this.dom.tally3) this.dom.tally3.textContent = r3;
     if (this.dom.tally4) this.dom.tally4.textContent = r4;
     if (this.dom.tally5) this.dom.tally5.textContent = r5;
     if (this.dom.tallyRejected) this.dom.tallyRejected.textContent = rejected;
+
+    if (this.dom.filterCountNotRejected) this.dom.filterCountNotRejected.textContent = notRejected;
+    if (this.dom.filterCountUnrated) this.dom.filterCountUnrated.textContent = unrated;
+    if (this.dom.filterCount3) this.dom.filterCount3.textContent = r3;
+    if (this.dom.filterCount4) this.dom.filterCount4.textContent = r4;
+    if (this.dom.filterCount5) this.dom.filterCount5.textContent = r5;
+    if (this.dom.filterCountRejected) this.dom.filterCountRejected.textContent = rejected;
+    if (this.dom.filterCountAll) this.dom.filterCountAll.textContent = total;
   }
 
   updateHud() {
@@ -1071,11 +1131,118 @@ class DarkCullApp {
     }
   }
 
+  /**
+   * Skips / Keeps the current photo and advances to the next photo, recording the skip in the undo stack.
+   */
+  skipPhoto() {
+    if (this.filteredPhotos.length === 0 || this.currentIndex < 0) return;
+    const photo = this.filteredPhotos[this.currentIndex];
+    this.undoStack.push({
+      type: 'skip',
+      photoId: photo.id,
+    });
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.nextPhoto();
+  }
+
+  /**
+   * Undoes the most recent rating or skip action (triggered via Long-Press on mobile or U / Ctrl+Z).
+   */
+  async undoLastAction() {
+    if (!this.undoStack || this.undoStack.length === 0) {
+      this.showToast('Nothing to undo');
+      return;
+    }
+
+    const action = this.undoStack.pop();
+    const photo = this.allPhotos.find((p) => p.id === action.photoId);
+    if (!photo) {
+      this.showToast('Nothing to undo');
+      return;
+    }
+
+    if (action.type === 'skip') {
+      const idx = this.filteredPhotos.indexOf(photo);
+      if (idx !== -1) {
+        this.currentIndex = idx;
+        this.renderCurrentPhoto();
+      }
+      this.showToast(`↺ Returned to ${photo.jpegName || photo.stem}`);
+      return;
+    }
+
+    // Restore previous rating
+    const restoredRating = action.prevRating ?? 0;
+    photo.rating = restoredRating;
+    photo.syncStatus = 'dirty';
+    photo.userRated = true;
+    photo.ratingLoaded = true;
+    this.updateTallies();
+
+    this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
+    let idx = this.filteredPhotos.indexOf(photo);
+    if (idx === -1) {
+      // If active filter hides the restored rating, switch to 'not-rejected' or 'all' so user sees the photo
+      this.activeFilter = restoredRating === -1 ? 'all' : 'not-rejected';
+      this.dom.filterPills.forEach((p) => {
+        p.classList.toggle('active', p.dataset.filter === this.activeFilter);
+      });
+      this.filteredPhotos = this.allPhotos.filter((p) => this._matchesActiveFilter(p));
+      idx = this.filteredPhotos.indexOf(photo);
+    }
+
+    this.viewportEngine.setPhotos(this.filteredPhotos);
+    if (this.filteredPhotos.length > 0) {
+      this.dom.emptyState.style.display = 'none';
+      this.currentIndex = Math.max(0, idx);
+      this.renderCurrentPhoto();
+    } else {
+      this.currentIndex = -1;
+      this.updateHud();
+    }
+
+    const ratingLabel =
+      restoredRating === -1
+        ? 'Rejected (✕)'
+        : restoredRating === 0
+        ? 'Unrated (★0)'
+        : `★${restoredRating}`;
+    this.showToast(`↺ Undid: ${photo.stem} restored to ${ratingLabel}`);
+
+    // Persist + enqueue restored rating to XMP sync queue
+    const syncItem = {
+      id: photo.id,
+      folderId: photo.folderId,
+      stem: photo.stem,
+      rating: restoredRating,
+      timestamp: Date.now(),
+      mode: this.mode,
+      photoData: { ...photo },
+    };
+    try {
+      await Promise.all([cacheStore.updatePhoto(photo), cacheStore.enqueueSyncItem(syncItem)]);
+    } catch (err) {
+      console.error('Failed to persist undo rating:', err);
+    }
+    this.updateSyncBadge();
+    this.flushSyncQueue();
+  }
+
   // --- Rating & Non-Destructive XMP Background Sync ---
 
   async setRating(rating) {
     if (this.filteredPhotos.length === 0 || this.currentIndex < 0) return;
     const photo = this.filteredPhotos[this.currentIndex];
+
+    // Push to undo stack before mutating
+    this.undoStack.push({
+      type: 'rate',
+      photoId: photo.id,
+      prevRating: photo.rating || 0,
+      newRating: rating,
+    });
+    if (this.undoStack.length > 50) this.undoStack.shift();
+
     if (photo.rating === rating) {
       if (this.autoAdvance) this.nextPhoto();
       return;
