@@ -53,6 +53,7 @@ export class InputController {
     this.touchStartY = 0;
     this.touchStartTime = 0;
     this.isSwiping = false;
+    this.multiTouchActive = false;
     this.longPressTriggered = false;
     this._longPressTimer = null;
     this._badgeHideTimer = null;
@@ -164,17 +165,17 @@ export class InputController {
       case 'reject':
         return { action: 'rate', rating: -1, label: '✕ REJECT', cls: 'swipe-reject', dir };
       case 'rate_0':
-        return { action: 'rate', rating: 0, label: '★ 0', cls: 'swipe-rate-0', dir };
+        return { action: 'rate', rating: 0, label: '★ 0 CLEAR', cls: 'swipe-rate-0', dir };
       case 'rate_1':
-        return { action: 'rate', rating: 1, label: '★ 1', cls: 'swipe-rate-1', dir };
+        return { action: 'rate', rating: 1, label: '★ 1 STAR', cls: 'swipe-rate-1', dir };
       case 'rate_2':
-        return { action: 'rate', rating: 2, label: '★ 2', cls: 'swipe-rate-2', dir };
+        return { action: 'rate', rating: 2, label: '★ 2 STARS', cls: 'swipe-rate-2', dir };
       case 'rate_3':
-        return { action: 'rate', rating: 3, label: '★ 3', cls: 'swipe-rate-3', dir };
+        return { action: 'rate', rating: 3, label: '★ 3 STARS', cls: 'swipe-rate-3', dir };
       case 'rate_4':
-        return { action: 'rate', rating: 4, label: '★ 4', cls: 'swipe-rate-4', dir };
+        return { action: 'rate', rating: 4, label: '★ 4 STARS', cls: 'swipe-rate-4', dir };
       case 'rate_5':
-        return { action: 'rate', rating: 5, label: '★ 5', cls: 'swipe-rate-5', dir };
+        return { action: 'rate', rating: 5, label: '★ 5 STARS', cls: 'swipe-rate-5', dir };
       default:
         return null;
     }
@@ -193,12 +194,12 @@ export class InputController {
     }
   }
 
-  _getSwipeIntent(deltaX, deltaY) {
+  _getSwipeIntent(deltaX, deltaY, minDist = 24) {
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
     const dist = Math.hypot(deltaX, deltaY);
 
-    if (dist < 30) return null;
+    if (dist < minDist) return null;
 
     let dir;
     if (absX > absY) {
@@ -230,13 +231,30 @@ export class InputController {
     }
   }
 
-  _resetCardTransform() {
-    if (this.imgElement && !this.isZoomedFn()) {
-      this.imgElement.style.transition = 'transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.18s ease';
+  _showCommittedBadge(intent, durationMs = 520) {
+    if (!this.swipeBadge || !intent) return;
+    clearTimeout(this._badgeHideTimer);
+    this.swipeBadge.textContent = intent.label;
+    this.swipeBadge.className = `swipe-badge visible ${intent.cls}`;
+    this.swipeBadge.style.opacity = '1';
+    this.swipeBadge.style.transform = 'translate(-50%, -50%) scale(1.04)';
+
+    this._badgeHideTimer = setTimeout(() => {
+      if (this.swipeBadge && !this.isSwiping) {
+        this.swipeBadge.style.opacity = '0';
+        this.swipeBadge.style.transform = 'translate(-50%, -50%) scale(0.88)';
+      }
+    }, durationMs);
+  }
+
+  _resetCardTransform(hideBadge = true) {
+    if (this.imgElement && !this.isZoomedFn() && !this.multiTouchActive) {
+      this.imgElement.style.transition = 'transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease';
       this.imgElement.style.transform = 'none';
       this.imgElement.style.opacity = '1';
     }
-    if (this.swipeBadge) {
+    if (hideBadge && this.swipeBadge) {
+      clearTimeout(this._badgeHideTimer);
       this.swipeBadge.className = 'swipe-badge';
       this.swipeBadge.style.opacity = '0';
     }
@@ -256,13 +274,18 @@ export class InputController {
         this._clearLongPressTimer();
         this._flushPendingCommit();
 
-        if (e.touches.length !== 1) {
+        // Multi-touch (2-finger pinch-to-zoom): cancel swipe/hold and let ViewportEngine handle pinch
+        if (e.touches.length > 1) {
+          this.multiTouchActive = true;
           this.isSwiping = false;
           this.longPressTriggered = false;
-          this._resetCardTransform();
+          if (this.swipeBadge) {
+            this.swipeBadge.style.opacity = '0';
+          }
           return;
         }
 
+        this.multiTouchActive = false;
         const touch = e.touches[0];
         this.touchStartX = touch.clientX;
         this.touchStartY = touch.clientY;
@@ -274,11 +297,11 @@ export class InputController {
           this.imgElement.style.transition = 'none';
         }
 
-        // Start Long-Press timer (~450ms hold while not zoomed)
+        // Start Long-Press timer (~430ms hold while not zoomed)
         if (!this.isZoomedFn()) {
           this._longPressTimer = setTimeout(() => {
             this._longPressTimer = null;
-            if (this.isSwiping || this.isZoomedFn()) return;
+            if (this.isSwiping || this.multiTouchActive || this.isZoomedFn()) return;
 
             const map = this.getGestureMapFn() || {};
             const intent = this._resolveGestureAction(map.longPress ?? 'undo', 'hold');
@@ -287,20 +310,13 @@ export class InputController {
             this.longPressTriggered = true;
             if (navigator.vibrate) {
               try {
-                navigator.vibrate(40);
+                navigator.vibrate(35);
               } catch (_) {}
             }
 
-            if (this.swipeBadge) {
-              clearTimeout(this._badgeHideTimer);
-              this.swipeBadge.textContent = intent.label;
-              this.swipeBadge.className = `swipe-badge visible ${intent.cls}`;
-              this.swipeBadge.style.opacity = '1';
-              this.swipeBadge.style.transform = 'translate(-50%, -50%) scale(1.05)';
-            }
-
+            this._showCommittedBadge(intent, 580);
             this._executeGestureIntent(intent);
-          }, 450);
+          }, 430);
         }
       },
       { passive: true }
@@ -309,13 +325,20 @@ export class InputController {
     this.touchContainer.addEventListener(
       'touchmove',
       (e) => {
-        if (this.longPressTriggered) {
+        if (e.touches.length > 1) {
+          this.multiTouchActive = true;
+          this.isSwiping = false;
+          this._clearLongPressTimer();
+          return;
+        }
+
+        if (this.longPressTriggered || this.multiTouchActive) {
           if (e.cancelable) e.preventDefault();
           return;
         }
 
-        // When zoomed in, ViewportEngine handles 1:1 panning; do not swipe-rate
-        if (this.isZoomedFn() || e.touches.length !== 1) {
+        // When zoomed in, ViewportEngine handles 1-finger panning; do not swipe-rate
+        if (this.isZoomedFn()) {
           this._clearLongPressTimer();
           return;
         }
@@ -325,25 +348,28 @@ export class InputController {
         const deltaY = touch.clientY - this.touchStartY;
         const dist = Math.hypot(deltaX, deltaY);
 
-        if (dist > 12) {
+        if (dist > 10) {
           this._clearLongPressTimer();
           if (!this.imgElement || this.imgElement.style.display === 'none') return;
 
           this.isSwiping = true;
           if (e.cancelable) e.preventDefault();
 
-          // Apply Tinder-style card drag & slight tilt
-          const rotateDeg = Math.max(-14, Math.min(14, deltaX * 0.05));
-          this.imgElement.style.transform = `translate3d(${deltaX * 0.75}px, ${deltaY * 0.75}px, 0) rotate(${rotateDeg}deg)`;
+          // Smooth damped card drag & subtle tilt
+          const dampedX = deltaX * 0.65;
+          const dampedY = deltaY * 0.65;
+          const rotateDeg = Math.max(-10, Math.min(10, deltaX * 0.035));
+          this.imgElement.style.transform = `translate3d(${dampedX}px, ${dampedY}px, 0) rotate(${rotateDeg}deg)`;
 
-          const intent = this._getSwipeIntent(deltaX, deltaY);
+          const intent = this._getSwipeIntent(deltaX, deltaY, 22);
           if (this.swipeBadge) {
             if (intent) {
-              const progress = Math.min(1, (dist - 30) / 65);
+              clearTimeout(this._badgeHideTimer);
+              const progress = Math.min(1, Math.max(0.35, (dist - 20) / 50));
               this.swipeBadge.textContent = intent.label;
               this.swipeBadge.className = `swipe-badge visible ${intent.cls}`;
-              this.swipeBadge.style.opacity = `${Math.max(0.25, progress)}`;
-              this.swipeBadge.style.transform = `translate(-50%, -50%) scale(${0.85 + 0.25 * progress})`;
+              this.swipeBadge.style.opacity = `${progress}`;
+              this.swipeBadge.style.transform = `translate(-50%, -50%) scale(${0.88 + 0.16 * progress})`;
             } else {
               this.swipeBadge.className = 'swipe-badge';
               this.swipeBadge.style.opacity = '0';
@@ -359,12 +385,17 @@ export class InputController {
       (e) => {
         this._clearLongPressTimer();
 
+        if (this.multiTouchActive) {
+          if (e.touches.length === 0) {
+            this.multiTouchActive = false;
+          }
+          return;
+        }
+
         if (this.longPressTriggered) {
           this.longPressTriggered = false;
           this.isSwiping = false;
-          this._badgeHideTimer = setTimeout(() => {
-            this._resetCardTransform();
-          }, 260);
+          this._resetCardTransform(false);
           return;
         }
 
@@ -375,16 +406,18 @@ export class InputController {
         const deltaY = touch.clientY - this.touchStartY;
         const dist = Math.hypot(deltaX, deltaY);
         const now = Date.now();
+        const elapsed = Math.max(1, now - this.touchStartTime);
+        const velocity = dist / elapsed; // px per ms
 
         // 1. Check if it was a tap (minimal finger movement) -> check for Double-Tap Zoom
-        if (!this.isSwiping && dist < 20) {
+        if (!this.isSwiping && dist < 18) {
           const timeSinceLastTap = now - this.lastTapTime;
           const distFromLastTap = Math.hypot(
             touch.clientX - this.lastTapX,
             touch.clientY - this.lastTapY
           );
 
-          if (timeSinceLastTap > 0 && timeSinceLastTap < 350 && distFromLastTap < 45) {
+          if (timeSinceLastTap > 0 && timeSinceLastTap < 340 && distFromLastTap < 48) {
             if (e.cancelable) e.preventDefault();
             this.lastTapTime = 0;
             this.onToggleZoom(touch.clientX, touch.clientY);
@@ -394,7 +427,9 @@ export class InputController {
           this.lastTapTime = now;
           this.lastTapX = touch.clientX;
           this.lastTapY = touch.clientY;
-          this._resetCardTransform();
+          if (!this.isZoomedFn()) {
+            this._resetCardTransform(true);
+          }
           return;
         }
 
@@ -404,29 +439,50 @@ export class InputController {
           return;
         }
 
-        // 3. Evaluate swipe commit threshold (75px)
-        const COMMIT_THRESHOLD = 75;
-        const intent = this._getSwipeIntent(deltaX, deltaY);
+        // 3. Evaluate swipe commit: either distance >= 58px OR fast flick (dist >= 28px & velocity >= 0.42px/ms)
+        const isCommittedSwipe = dist >= 58 || (dist >= 28 && velocity >= 0.42 && elapsed < 260);
+        const intent = this._getSwipeIntent(deltaX, deltaY, 24);
 
-        if (intent && dist >= COMMIT_THRESHOLD && this.imgElement) {
-          // Fly out animation in the swipe direction before committing action
-          const flyX = intent.dir === 'right' ? 320 : intent.dir === 'left' ? -320 : deltaX;
-          const flyY = intent.dir === 'down' ? 320 : intent.dir === 'up' ? -320 : deltaY;
+        if (intent && isCommittedSwipe && this.imgElement) {
+          if (navigator.vibrate) {
+            try {
+              navigator.vibrate(12);
+            } catch (_) {}
+          }
 
-          this.imgElement.style.transition = 'transform 0.14s ease-in, opacity 0.14s ease-in';
-          this.imgElement.style.transform = `translate3d(${flyX}px, ${flyY}px, 0) scale(0.92)`;
-          this.imgElement.style.opacity = '0.2';
+          // Keep the swipe badge prominently visible for 520ms so even fast flicks are unmistakable
+          this._showCommittedBadge(intent, 520);
+
+          // Quick, crisp exit in the swipe direction
+          const flyX = intent.dir === 'right' ? 220 : intent.dir === 'left' ? -220 : deltaX * 0.8;
+          const flyY = intent.dir === 'down' ? 220 : intent.dir === 'up' ? -220 : deltaY * 0.8;
+
+          this.imgElement.style.transition = 'transform 0.09s ease-out, opacity 0.09s ease-out';
+          this.imgElement.style.transform = `translate3d(${flyX}px, ${flyY}px, 0) scale(0.94)`;
+          this.imgElement.style.opacity = '0.15';
 
           this._pendingCommit = () => {
-            this._resetCardTransform();
+            // Instant reset at center (no backward slide!) before swapping image src
+            if (this.imgElement && !this.isZoomedFn()) {
+              this.imgElement.style.transition = 'none';
+              this.imgElement.style.transform = 'scale(0.97)';
+              this.imgElement.style.opacity = '0.4';
+            }
             this._executeGestureIntent(intent);
+            requestAnimationFrame(() => {
+              if (this.imgElement && !this.isZoomedFn()) {
+                this.imgElement.style.transition = 'transform 0.11s ease-out, opacity 0.11s ease-out';
+                this.imgElement.style.transform = 'none';
+                this.imgElement.style.opacity = '1';
+              }
+            });
           };
           this._commitTimer = setTimeout(() => {
             this._flushPendingCommit();
-          }, 120);
+          }, 85);
         } else {
           // Snap back to center
-          this._resetCardTransform();
+          this._resetCardTransform(true);
         }
 
         this.isSwiping = false;
@@ -437,8 +493,11 @@ export class InputController {
     this.touchContainer.addEventListener('touchcancel', () => {
       this._clearLongPressTimer();
       this.longPressTriggered = false;
+      this.multiTouchActive = false;
       this.isSwiping = false;
-      this._resetCardTransform();
+      if (!this.isZoomedFn()) {
+        this._resetCardTransform(true);
+      }
     });
   }
 }

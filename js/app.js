@@ -90,6 +90,7 @@ class DarkCullApp {
       loadingSpinner: document.getElementById('loadingSpinner'),
 
       // Bottom Bar / Thumb Dock (Prev / Status Pill / Next Navigation Arrows)
+      gestureHintBar: document.getElementById('gestureHintBar'),
       bottomDock: document.getElementById('bottomDock'),
       btnPrev: document.getElementById('btnPrev'),
       dockStatusPill: document.getElementById('dockStatusPill'),
@@ -189,12 +190,59 @@ class DarkCullApp {
     this._syncGestureSelectsUI();
   }
 
+  _formatGestureShortLabel(actionKey) {
+    switch (actionKey) {
+      case 'skip':
+        return 'Skip';
+      case 'back':
+        return 'Back';
+      case 'undo':
+        return 'Undo';
+      case 'reject':
+        return '✕';
+      case 'rate_0':
+        return '★0';
+      case 'rate_1':
+        return '★1';
+      case 'rate_2':
+        return '★2';
+      case 'rate_3':
+        return '★3';
+      case 'rate_4':
+        return '★4';
+      case 'rate_5':
+        return '★5';
+      default:
+        return '—';
+    }
+  }
+
+  _updateGestureHintBar() {
+    if (!this.dom.gestureHintBar) return;
+    const m = this.gestureMap;
+    const items = [
+      { icon: '↑', val: m.up },
+      { icon: '↓', val: m.down },
+      { icon: '←', val: m.left },
+      { icon: '→', val: m.right },
+      { icon: '⏱', val: m.longPress },
+    ].filter((item) => item.val && item.val !== 'none');
+
+    this.dom.gestureHintBar.innerHTML = items
+      .map(
+        (item) =>
+          `<span class="gesture-hint-chip"><span class="hint-dir">${item.icon}</span> ${this._formatGestureShortLabel(item.val)}</span>`
+      )
+      .join('');
+  }
+
   _syncGestureSelectsUI() {
     if (this.dom.gestureUpSelect) this.dom.gestureUpSelect.value = this.gestureMap.up;
     if (this.dom.gestureDownSelect) this.dom.gestureDownSelect.value = this.gestureMap.down;
     if (this.dom.gestureLeftSelect) this.dom.gestureLeftSelect.value = this.gestureMap.left;
     if (this.dom.gestureRightSelect) this.dom.gestureRightSelect.value = this.gestureMap.right;
     if (this.dom.gestureHoldSelect) this.dom.gestureHoldSelect.value = this.gestureMap.longPress;
+    this._updateGestureHintBar();
   }
 
   _saveGestureMap() {
@@ -203,6 +251,7 @@ class DarkCullApp {
     } catch (e) {
       console.warn('Failed to save gesture map:', e);
     }
+    this._updateGestureHintBar();
   }
 
   _initViewportEngine() {
@@ -1071,13 +1120,14 @@ class DarkCullApp {
    * @param {boolean} resetIndex   if true, jump to the first photo of the new list
    * @param {boolean} keepCurrent  stay on the same photo (by reference) if it still matches -
    *                               used by background rating updates so the image never flickers
+   * @param {object|null} targetPhoto explicit photo to focus on after rebuilding the filtered list
    */
-  _applyFilter(resetIndex = false, keepCurrent = false) {
+  _applyFilter(resetIndex = false, keepCurrent = false, targetPhoto = null) {
     const currentVisible =
       this.currentIndex >= 0 && this.currentIndex < this.filteredPhotos.length
         ? this.filteredPhotos[this.currentIndex]
         : null;
-    const anchor = resetIndex ? null : currentVisible || this._anchorPhoto;
+    const anchor = resetIndex ? null : targetPhoto || currentVisible || this._anchorPhoto;
 
     const nextFiltered = [];
     let seenAnchor = false;
@@ -1278,17 +1328,35 @@ class DarkCullApp {
     }
   }
 
-  nextPhoto() {
+  nextPhoto(recordUndo = true, navLabel = 'next') {
     if (this.filteredPhotos.length === 0) return;
     if (this.currentIndex < this.filteredPhotos.length - 1) {
+      if (recordUndo && this.currentIndex >= 0) {
+        const photo = this.filteredPhotos[this.currentIndex];
+        this.undoStack.push({
+          type: 'nav',
+          navLabel,
+          photoId: photo.id,
+        });
+        if (this.undoStack.length > 50) this.undoStack.shift();
+      }
       this.currentIndex++;
       this.renderCurrentPhoto();
     }
   }
 
-  prevPhoto() {
+  prevPhoto(recordUndo = true, navLabel = 'back') {
     if (this.filteredPhotos.length === 0) return;
     if (this.currentIndex > 0) {
+      if (recordUndo && this.currentIndex >= 0) {
+        const photo = this.filteredPhotos[this.currentIndex];
+        this.undoStack.push({
+          type: 'nav',
+          navLabel,
+          photoId: photo.id,
+        });
+        if (this.undoStack.length > 50) this.undoStack.shift();
+      }
       this.currentIndex--;
       this.renderCurrentPhoto();
     }
@@ -1298,18 +1366,12 @@ class DarkCullApp {
    * Skips / Keeps the current photo and advances to the next photo, recording the skip in the undo stack.
    */
   skipPhoto() {
-    if (this.filteredPhotos.length === 0 || this.currentIndex < 0) return;
-    const photo = this.filteredPhotos[this.currentIndex];
-    this.undoStack.push({
-      type: 'skip',
-      photoId: photo.id,
-    });
-    if (this.undoStack.length > 50) this.undoStack.shift();
-    this.nextPhoto();
+    this.nextPhoto(true, 'skip');
   }
 
   /**
-   * Undoes the most recent rating or skip action (triggered via Long-Press on mobile or U / Ctrl+Z).
+   * Undoes the most recent action — whether it was a rating, skip, back, or next navigation.
+   * Always returns the viewer to the photo where that action took place.
    */
   async undoLastAction() {
     if (!this.undoStack || this.undoStack.length === 0) {
@@ -1324,17 +1386,26 @@ class DarkCullApp {
       return;
     }
 
-    if (action.type === 'skip') {
-      const idx = this.filteredPhotos.indexOf(photo);
-      if (idx !== -1) {
-        this.currentIndex = idx;
-        this.renderCurrentPhoto();
+    if (action.type === 'nav' || action.type === 'skip') {
+      this._anchorPhoto = photo;
+      if (!this._matchesActiveFilter(photo)) {
+        this.activeFilter = photo.rating === -1 ? 'all' : 'not-rejected';
+        this.dom.filterPills.forEach((p) => {
+          p.classList.toggle('active', p.dataset.filter === this.activeFilter);
+        });
       }
-      this.showToast(`↺ Returned to ${photo.jpegName || photo.stem}`);
+      this._applyFilter(false, false, photo);
+      const actionName =
+        action.navLabel === 'back'
+          ? 'Back'
+          : action.navLabel === 'skip' || action.type === 'skip'
+          ? 'Skip'
+          : 'Next';
+      this.showToast(`↺ Undid ${actionName} → ${photo.jpegName || photo.stem}`);
       return;
     }
 
-    // Restore previous rating
+    // Restore previous rating and jump directly back to the rated photo
     const restoredRating = action.prevRating ?? 0;
     photo.rating = restoredRating;
     photo.syncStatus = 'dirty';
@@ -1350,15 +1421,17 @@ class DarkCullApp {
         p.classList.toggle('active', p.dataset.filter === this.activeFilter);
       });
     }
-    this._applyFilter(false);
+    this._applyFilter(false, false, photo);
 
     const ratingLabel =
       restoredRating === -1
         ? 'Rejected (✕)'
         : restoredRating === 0
-        ? 'Unrated (★0)'
-        : `★${restoredRating}`;
-    this.showToast(`↺ Undid: ${photo.stem} restored to ${ratingLabel}`);
+        ? 'Unrated'
+        : restoredRating === 1
+        ? '★1 Star'
+        : `★${restoredRating} Stars`;
+    this.showToast(`↺ Undid → ${photo.stem} (${ratingLabel})`);
 
     // Persist + enqueue restored rating to XMP sync queue
     const syncItem = {
@@ -1395,7 +1468,7 @@ class DarkCullApp {
     if (this.undoStack.length > 50) this.undoStack.shift();
 
     if (photo.rating === rating) {
-      if (this.autoAdvance) this.nextPhoto();
+      if (this.autoAdvance) this.nextPhoto(false);
       return;
     }
 
@@ -1411,7 +1484,7 @@ class DarkCullApp {
       this._applyFilter(false);
     } else {
       this.updateHud();
-      if (this.autoAdvance) this.nextPhoto();
+      if (this.autoAdvance) this.nextPhoto(false);
       else this._saveProgress();
     }
 

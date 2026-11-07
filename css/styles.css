@@ -370,6 +370,7 @@ button.hud-pill:hover,
   align-items: center;
   justify-content: center;
   background-color: #000000;
+  touch-action: none;
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
@@ -383,6 +384,7 @@ button.hud-pill:hover,
   cursor: zoom-in;
   will-change: transform;
   transition: transform 0.05s ease-out;
+  touch-action: none;
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
@@ -394,22 +396,30 @@ button.hud-pill:hover,
 
 .loupe-indicator {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 11px;
-  color: var(--accent-hover);
+  bottom: 108px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(96, 165, 250, 0.55);
+  border-radius: 9999px;
+  padding: 7px 16px;
+  font-size: 12px;
+  color: #93c5fd;
   display: none;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   font-weight: 700;
-  z-index: 10;
+  letter-spacing: 0.2px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 60;
 }
 
 .loupe-indicator.active {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* RAW-only notice fallback overlay */
@@ -610,7 +620,41 @@ button.hud-pill:hover,
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* --- Persistent Bottom Thumb Dock (Navigation Arrows) --- */
+/* --- Live Gesture Compass Hint Bar & Bottom Thumb Dock --- */
+.gesture-hint-bar {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(15, 15, 18, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+  z-index: 45;
+  white-space: nowrap;
+}
+
+.gesture-hint-chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(243, 244, 246, 0.78);
+  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.gesture-hint-chip .hint-dir {
+  color: #60a5fa;
+  font-weight: 800;
+}
+
 .bottom-dock {
   position: absolute;
   bottom: 16px;
@@ -943,23 +987,27 @@ button.hud-pill:hover,
     top: 8px;
     left: 8px;
     right: 8px;
-    gap: 6px;
+    gap: 5px;
   }
   .hud-top-row {
     gap: 4px;
+    align-items: flex-start;
   }
   .hud-left-group {
     gap: 4px;
     flex-wrap: wrap;
   }
+  #hudStarBadge {
+    display: none; /* Shown prominently in #dockStatusPill at bottom on mobile */
+  }
   .hud-exif-pill {
-    padding: 3px 6px;
+    padding: 3px 7px;
     font-size: 10px;
     gap: 4px;
     border-radius: 6px;
   }
   .hud-pill {
-    padding: 5px 8px;
+    padding: 5px 9px;
     font-size: 11px;
     gap: 5px;
   }
@@ -970,7 +1018,7 @@ button.hud-pill:hover,
     display: none;
   }
   .hud-filename {
-    max-width: 115px;
+    max-width: 130px;
   }
   .hud-actions {
     gap: 4px;
@@ -999,16 +1047,33 @@ button.hud-pill:hover,
     flex: 1 0 auto;
     text-align: center;
   }
+  .swipe-badge {
+    font-size: 24px;
+    padding: 12px 22px;
+    border-radius: 14px;
+  }
+  .gesture-hint-bar {
+    bottom: 66px;
+    padding: 3px 9px;
+    gap: 4px;
+  }
+  .gesture-hint-chip {
+    font-size: 10.5px;
+    padding: 1px 4px;
+  }
+  .loupe-indicator {
+    bottom: 100px;
+  }
   .bottom-dock {
     bottom: 12px;
     padding: 6px 10px;
-    gap: 12px;
+    gap: 10px;
     justify-content: center;
   }
   .dock-btn,
   .dock-nav-btn {
-    min-width: 72px;
+    min-width: 68px;
     height: 40px;
-    padding: 0 18px;
+    padding: 0 16px;
   }
 }
