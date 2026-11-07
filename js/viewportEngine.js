@@ -158,7 +158,7 @@ export class ViewportEngine {
   async _doLoadItem(photo) {
     try {
       const blob = await this.getBlobFn(photo);
-      if (!blob || this.preloaded.has(photo.id)) return;
+      if (!blob || this.preloaded.has(photo.id) || !this.photos.some((p) => p.id === photo.id)) return;
 
       const url = URL.createObjectURL(blob);
       const img = new Image();

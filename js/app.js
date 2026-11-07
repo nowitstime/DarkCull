@@ -19,7 +19,7 @@ const RAW_EXTS = new Set([
   'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
 ]);
 const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
-export const APP_VERSION = '1.4';
+export const APP_VERSION = '1.5';
 
 class DarkCullApp {
   constructor() {
@@ -48,6 +48,7 @@ class DarkCullApp {
     this.localFiles = new Map(); // jpegFileId -> File (local mode, in-memory)
     this.localDirHandle = null; // Used in local mode
     this._scrubThumbUrl = null; // Temporary object URL used by the floating scrub preview
+    this._activeScrubToken = 0; // Active scrub token to discard stale async blob reads
 
     // Elements
     this.dom = {
@@ -525,7 +526,8 @@ class DarkCullApp {
       startIndex = Math.max(0, this.currentIndex);
       targetIndex = startIndex;
       if (this.dom.hudIndex) this.dom.hudIndex.classList.add('is-scrubbing');
-      this._updateScrubPreview(targetIndex, clientX, ++scrubToken);
+      this._activeScrubToken = ++scrubToken;
+      this._updateScrubPreview(targetIndex, clientX, this._activeScrubToken);
       return true;
     };
 
@@ -556,14 +558,15 @@ class DarkCullApp {
 
       if (nextIdx !== targetIndex || moved) {
         targetIndex = nextIdx;
-        this._updateScrubPreview(targetIndex, clientX, ++scrubToken);
+        this._activeScrubToken = ++scrubToken;
+        this._updateScrubPreview(targetIndex, clientX, this._activeScrubToken);
       }
     };
 
     const endScrub = (commit = true) => {
       if (!active) return;
       active = false;
-      scrubToken++;
+      this._activeScrubToken = ++scrubToken;
       if (this.dom.hudIndex) this.dom.hudIndex.classList.remove('is-scrubbing');
       this._hideScrubPreview();
 
@@ -699,12 +702,13 @@ class DarkCullApp {
   async _updateScrubPreview(index, clientX, token) {
     const preview = this.dom.scrubPreview;
     if (!preview || !this.filteredPhotos || index < 0 || index >= this.filteredPhotos.length) return;
+    if (this._activeScrubToken !== token) return;
 
     const total = this.filteredPhotos.length;
     const photo = this.filteredPhotos[index];
 
     // Position tooltip horizontally near the finger, clamped safely inside viewport edges
-    const halfWidth = 96;
+    const halfWidth = 115;
     const clampedX = Math.max(halfWidth + 8, Math.min(window.innerWidth - halfWidth - 8, clientX));
     preview.style.left = `${clampedX}px`;
     preview.style.display = 'flex';
@@ -726,7 +730,7 @@ class DarkCullApp {
     // Backfill neighborhood EXIF timestamps on the fly if not yet parsed so burst fraction shows while scrubbing
     if (!photo.captureTimeMs && photo.exif === undefined) {
       this._ensureNeighborhoodBurstExif(photo).then((changed) => {
-        if (changed && preview.style.display !== 'none') {
+        if (changed && this._activeScrubToken === token && preview.style.display !== 'none') {
           this._applyBurstBadge(this.dom.scrubPreviewBurst, photo);
           this._applyBurstBadge(this.dom.hudBurstBadge, photo);
         }
@@ -770,7 +774,7 @@ class DarkCullApp {
     }
 
     // Discard if user has already scrubbed to a newer frame or released finger
-    if (preview.style.display === 'none') return;
+    if (this._activeScrubToken !== token || preview.style.display === 'none') return;
 
     if (blob) {
       if (this._scrubThumbUrl) {
@@ -903,6 +907,8 @@ class DarkCullApp {
         p.userRated = true;
       } else if (s.rating !== undefined && s.ratingLoaded) {
         p.rating = s.rating === 1 || s.rating === 2 ? 0 : s.rating;
+        p.ratingLoaded = true;
+        if (s.userRated) p.userRated = true;
       }
     }
     this._computeBursts(photos);
@@ -1400,7 +1406,7 @@ class DarkCullApp {
       const i = (baseIdx + step) % total;
       const p = this.allPhotos[i];
       if (!p.jpegFileId) continue;
-      if (p.exif !== undefined && p.captureTimeMs) continue;
+      if (p.exif !== undefined && (p.captureTimeMs || p.exif === null)) continue;
 
       let blob = null;
       if (this.mode === 'local' && this.localFiles.has(p.jpegFileId)) {
@@ -2106,6 +2112,8 @@ class DarkCullApp {
     if (stored && stored.xmpFileId && !photo.xmpFileId) {
       photo.xmpFileId = stored.xmpFileId;
     }
+    const xmpName = photo.xmpName || XmpBuilder.determineSidecarName(photo.rawName, photo.jpegName) || `${photo.stem}.xmp`;
+    photo.xmpName = xmpName;
 
     // Base document to patch: cached original, else fetch it, so darktable history is never wiped
     let baseXml = await cacheStore.getXmpContent(item.id);
@@ -2113,7 +2121,7 @@ class DarkCullApp {
       baseXml = await driveService.downloadText(photo.xmpFileId);
     } else if (!baseXml && item.mode === 'local') {
       try {
-        const existing = await this.localDirHandle.getFileHandle(photo.xmpName);
+        const existing = await this.localDirHandle.getFileHandle(xmpName);
         baseXml = await (await existing.getFile()).text();
       } catch (_) {
         /* no sidecar yet */
@@ -2128,12 +2136,12 @@ class DarkCullApp {
       if (photo.xmpFileId) {
         await driveService.updateXmpFile(photo.xmpFileId, newXml);
       } else {
-        const res = await driveService.createXmpFile(photo.folderId, photo.xmpName, newXml);
+        const res = await driveService.createXmpFile(photo.folderId, xmpName, newXml);
         photo.xmpFileId = res.id;
         item.photoData.xmpFileId = res.id;
       }
     } else {
-      const fileHandle = await this.localDirHandle.getFileHandle(photo.xmpName, { create: true });
+      const fileHandle = await this.localDirHandle.getFileHandle(xmpName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(newXml);
       await writable.close();

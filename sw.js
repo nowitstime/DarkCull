@@ -3,7 +3,7 @@
  * Caches static app shell assets for offline use (Network-First with offline fallback).
  */
 
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 const CACHE_NAME = `darkcull-shell-v${APP_VERSION}`;
 const STATIC_ASSETS = [
   './',

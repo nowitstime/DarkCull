@@ -249,7 +249,7 @@ export class ExifReader {
    */
   static parseExifTimestamp(dateStr, subSecStr = null) {
     if (!dateStr || typeof dateStr !== 'string') return null;
-    const m = dateStr.match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+    const m = dateStr.match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})[\sT]+(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/i);
     if (!m) return null;
     const year = parseInt(m[1], 10);
     const month = parseInt(m[2], 10) - 1;
@@ -259,8 +259,9 @@ export class ExifReader {
     const sec = parseInt(m[6], 10);
 
     let ms = 0;
-    if (subSecStr) {
-      const digits = String(subSecStr).replace(/\D/g, '');
+    const subSecCandidate = subSecStr || m[7];
+    if (subSecCandidate) {
+      const digits = String(subSecCandidate).replace(/\D/g, '');
       if (digits.length > 0) {
         ms = Math.round(parseFloat(`0.${digits}`) * 1000);
       }
