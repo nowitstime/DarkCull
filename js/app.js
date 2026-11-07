@@ -19,7 +19,7 @@ const RAW_EXTS = new Set([
   'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
 ]);
 const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
-export const APP_VERSION = '1.3';
+export const APP_VERSION = '1.4';
 
 class DarkCullApp {
   constructor() {

@@ -3,13 +3,17 @@
  * Caches static app shell assets for offline use (Network-First with offline fallback).
  */
 
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const CACHE_NAME = `darkcull-shell-v${APP_VERSION}`;
 const STATIC_ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './css/styles.css',
+  './icons/favicon-64.png',
+  './icons/apple-touch-icon.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
   './js/app.js',
   './js/driveService.js',
   './js/cacheStore.js',
