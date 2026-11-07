@@ -1,9 +1,10 @@
 /**
  * DarkCull Service Worker
- * Caches static app shell assets for offline use.
+ * Caches static app shell assets for offline use (Network-First with offline fallback).
  */
 
-const CACHE_NAME = 'darkcull-shell-v10';
+const APP_VERSION = '1.1';
+const CACHE_NAME = `darkcull-shell-v${APP_VERSION}`;
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -42,7 +43,14 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
   // Let Google API requests and Google Identity Services pass through to network
@@ -54,22 +62,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for local app shell assets
+  // Network-first for app shell assets so updates load immediately when online,
+  // with full cache fallback when offline.
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => cachedResponse);
-
-      return cachedResponse || fetchPromise;
-    })
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request);
+      })
   );
 });

@@ -19,6 +19,7 @@ const RAW_EXTS = new Set([
   'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
 ]);
 const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
+export const APP_VERSION = '1.1';
 
 class DarkCullApp {
   constructor() {
@@ -119,6 +120,9 @@ class DarkCullApp {
       cacheEntireShootBtn: document.getElementById('cacheEntireShootBtn'),
       clearCacheBtn: document.getElementById('clearCacheBtn'),
       storageQuotaText: document.getElementById('storageQuotaText'),
+      appVersionText: document.getElementById('appVersionText'),
+      updateAppBtn: document.getElementById('updateAppBtn'),
+      updateAppBtnLabel: document.getElementById('updateAppBtnLabel'),
 
       // Folder Picker Modal
       folderModal: document.getElementById('folderModal'),
@@ -154,6 +158,10 @@ class DarkCullApp {
   }
 
   _initSettings() {
+    if (this.dom.appVersionText) {
+      this.dom.appVersionText.textContent = `v${APP_VERSION}`;
+    }
+
     const savedClientId = driveService.getClientId();
     if (savedClientId && this.dom.clientIdInput) {
       this.dom.clientIdInput.value = savedClientId;
@@ -407,6 +415,12 @@ class DarkCullApp {
     this.dom.cacheEntireShootBtn.addEventListener('click', () => {
       this.cacheEntireShoot();
     });
+
+    if (this.dom.updateAppBtn) {
+      this.dom.updateAppBtn.addEventListener('click', () => {
+        this.updateApp();
+      });
+    }
 
     // Folder Modals
     this.dom.folderSelectBtn.addEventListener('click', () => {
@@ -1652,6 +1666,55 @@ class DarkCullApp {
       const mbUsed = (quota.usage / (1024 * 1024)).toFixed(1);
       const mbQuota = (quota.quota / (1024 * 1024)).toFixed(0);
       this.dom.storageQuotaText.textContent = `${mbUsed} MB used of ${mbQuota} MB`;
+    }
+  }
+
+  /**
+   * Forces an immediate in-place app shell update (Service Worker + CacheStorage)
+   * without touching IndexedDB cached photos or unsynced XMP ratings.
+   */
+  async updateApp() {
+    if (this.dom.updateAppBtn) {
+      this.dom.updateAppBtn.disabled = true;
+    }
+    if (this.dom.updateAppBtnLabel) {
+      this.dom.updateAppBtnLabel.textContent = 'Updating...';
+    }
+    this.showToast('Checking for latest DarkCull update...');
+
+    try {
+      // Save current progress before reloading
+      this._saveProgress();
+
+      // 1. Update & unregister old Service Workers so fresh network assets take effect immediately
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          try {
+            await reg.update();
+            if (reg.waiting) {
+              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+            await reg.unregister();
+          } catch (_) {}
+        }
+      }
+
+      // 2. Clear static app shell CacheStorage (IndexedDB shoot/rating cache is separate & untouched)
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+
+      // 3. Reload with a cache-busting parameter to bypass HTTP disk cache
+      const url = new URL(window.location.href);
+      url.searchParams.set('v', `${APP_VERSION}_${Date.now()}`);
+      window.location.replace(url.toString());
+    } catch (err) {
+      console.error('Update app failed:', err);
+      this.showToast('Update failed — check internet connection');
+      if (this.dom.updateAppBtn) this.dom.updateAppBtn.disabled = false;
+      if (this.dom.updateAppBtnLabel) this.dom.updateAppBtnLabel.textContent = 'Update App';
     }
   }
 
