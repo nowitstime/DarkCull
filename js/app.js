@@ -19,7 +19,7 @@ const RAW_EXTS = new Set([
   'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
 ]);
 const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
-export const APP_VERSION = '1.2';
+export const APP_VERSION = '1.3';
 
 class DarkCullApp {
   constructor() {
@@ -52,12 +52,13 @@ class DarkCullApp {
     // Elements
     this.dom = {
       // Top HUD
+      hudInfoPill: document.getElementById('hudInfoPill'),
       hudSyncDot: document.getElementById('hudSyncDot'),
       hudSyncBtn: document.getElementById('hudSyncBtn'),
       hudFilename: document.getElementById('hudFilename'),
       hudFormatBadge: document.getElementById('hudFormatBadge'),
-      hudIndex: document.getElementById('hudIndex'),
       hudBurstBadge: document.getElementById('hudBurstBadge'),
+      hudIndex: document.getElementById('hudIndex'),
       hudExifPill: document.getElementById('hudExifPill'),
       exifText: document.getElementById('exifText'),
       cacheProgressBar: document.getElementById('cacheProgressBar'),
@@ -70,6 +71,7 @@ class DarkCullApp {
       scrubThumbPlaceholder: document.getElementById('scrubThumbPlaceholder'),
       scrubPreviewIndex: document.getElementById('scrubPreviewIndex'),
       scrubPreviewName: document.getElementById('scrubPreviewName'),
+      scrubPreviewBurst: document.getElementById('scrubPreviewBurst'),
       scrubPreviewFill: document.getElementById('scrubPreviewFill'),
 
       // Tally & Filter
@@ -490,47 +492,67 @@ class DarkCullApp {
   }
 
   /**
-   * Initializes horizontal touch-drag (and mouse-drag) scrubbing on the photo index counter (`91 / 906`).
-   * Displays a floating preview thumbnail + target index/filename while dragging and commits on release.
+   * Initializes horizontal & pull-down touch-drag (and mouse-drag) scrubbing on the top info/counter pill.
+   * Displays a floating preview thumbnail + target index/filename + burst fraction badge while dragging.
    */
   _initScrubber() {
-    const el = this.dom.hudIndex;
+    const el = this.dom.hudInfoPill || this.dom.hudIndex;
     if (!el) return;
 
     let active = false;
     let moved = false;
     let startX = 0;
+    let startY = 0;
     let startIndex = 0;
     let targetIndex = 0;
     let scrubToken = 0;
 
-    const beginScrub = (clientX) => {
+    const isSyncControlTarget = (target) => {
+      if (!target) return false;
+      return (
+        target === this.dom.hudSyncBtn ||
+        target === this.dom.hudSyncDot ||
+        Boolean(target.closest && target.closest('#hudSyncBtn'))
+      );
+    };
+
+    const beginScrub = (clientX, clientY) => {
       if (!this.filteredPhotos || this.filteredPhotos.length <= 1) return false;
       active = true;
       moved = false;
       startX = clientX;
+      startY = clientY;
       startIndex = Math.max(0, this.currentIndex);
       targetIndex = startIndex;
-      el.classList.add('is-scrubbing');
+      if (this.dom.hudIndex) this.dom.hudIndex.classList.add('is-scrubbing');
       this._updateScrubPreview(targetIndex, clientX, ++scrubToken);
       return true;
     };
 
-    const moveScrub = (clientX) => {
+    const moveScrub = (clientX, clientY) => {
       if (!active) return;
       const total = this.filteredPhotos.length;
       if (total <= 1) return;
 
       const deltaX = clientX - startX;
-      if (Math.abs(deltaX) > 4) moved = true;
+      const deltaY = clientY - startY;
+      if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 6) moved = true;
 
       // Map a comfortable horizontal drag span (~65% of screen width, clamped 180..320px) across the filtered list
       const spanPx = Math.max(180, Math.min(window.innerWidth * 0.65, 320));
       const deltaItems = Math.round((deltaX / spanPx) * (total - 1));
       const nextIdx = Math.max(0, Math.min(total - 1, startIndex + deltaItems));
 
-      // Keep the counter live in the top pill while scrubbing
-      el.textContent = `${nextIdx + 1} / ${total}`;
+      const targetPhoto = this.filteredPhotos[nextIdx];
+      if (targetPhoto) {
+        if (this.dom.hudFilename) {
+          this.dom.hudFilename.textContent = targetPhoto.jpegName || targetPhoto.rawName || targetPhoto.stem;
+        }
+        this._applyBurstBadge(this.dom.hudBurstBadge, targetPhoto);
+      }
+      if (this.dom.hudIndex) {
+        this.dom.hudIndex.textContent = `${nextIdx + 1} / ${total}`;
+      }
 
       if (nextIdx !== targetIndex || moved) {
         targetIndex = nextIdx;
@@ -542,7 +564,7 @@ class DarkCullApp {
       if (!active) return;
       active = false;
       scrubToken++;
-      el.classList.remove('is-scrubbing');
+      if (this.dom.hudIndex) this.dom.hudIndex.classList.remove('is-scrubbing');
       this._hideScrubPreview();
 
       if (commit && moved && targetIndex !== this.currentIndex && targetIndex >= 0 && targetIndex < this.filteredPhotos.length) {
@@ -565,8 +587,8 @@ class DarkCullApp {
     el.addEventListener(
       'touchstart',
       (e) => {
-        if (e.touches.length !== 1) return;
-        if (beginScrub(e.touches[0].clientX)) {
+        if (e.touches.length !== 1 || isSyncControlTarget(e.target)) return;
+        if (beginScrub(e.touches[0].clientX, e.touches[0].clientY)) {
           e.stopPropagation();
         }
       },
@@ -579,7 +601,7 @@ class DarkCullApp {
         if (!active || e.touches.length !== 1) return;
         e.preventDefault();
         e.stopPropagation();
-        moveScrub(e.touches[0].clientX);
+        moveScrub(e.touches[0].clientX, e.touches[0].clientY);
       },
       { passive: false }
     );
@@ -596,12 +618,12 @@ class DarkCullApp {
 
     // Desktop mouse fallback for testing/laptop trackpads
     el.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (!beginScrub(e.clientX)) return;
+      if (e.button !== 0 || isSyncControlTarget(e.target)) return;
+      if (!beginScrub(e.clientX, e.clientY)) return;
       e.preventDefault();
       e.stopPropagation();
 
-      const onMouseMove = (ev) => moveScrub(ev.clientX);
+      const onMouseMove = (ev) => moveScrub(ev.clientX, ev.clientY);
       const onMouseUp = () => {
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
@@ -612,6 +634,68 @@ class DarkCullApp {
     });
   }
 
+  /**
+   * Renders or hides a burst fraction badge (`⧉ 2/6`) for a given photo.
+   */
+  _applyBurstBadge(badgeEl, photo) {
+    if (!badgeEl) return;
+    if (photo && photo.burstTotal && photo.burstTotal >= 2) {
+      badgeEl.textContent = `⧉ ${photo.burstIndex}/${photo.burstTotal}`;
+      badgeEl.style.display = 'inline-flex';
+    } else {
+      badgeEl.style.display = 'none';
+    }
+  }
+
+  /**
+   * Ensures EXIF timestamps are parsed for `centerPhoto` and its immediate neighbors (`±5`)
+   * from cached blobs so burst fractions (`⧉ 2/6`) are accurate immediately during scrubbing or viewing.
+   */
+  async _ensureNeighborhoodBurstExif(centerPhoto) {
+    if (!centerPhoto || !this.allPhotos || this.allPhotos.length < 2) return false;
+    const centerIdx = this.allPhotos.indexOf(centerPhoto);
+    if (centerIdx === -1) return false;
+
+    const start = Math.max(0, centerIdx - 5);
+    const end = Math.min(this.allPhotos.length - 1, centerIdx + 5);
+    let updated = false;
+
+    for (let i = start; i <= end; i++) {
+      const p = this.allPhotos[i];
+      if (!p || !p.jpegFileId) continue;
+      if (typeof p.captureTimeMs === 'number' && !Number.isNaN(p.captureTimeMs)) continue;
+      if (p.exif !== undefined) continue;
+
+      let blob = null;
+      if (this.mode === 'local' && this.localFiles.has(p.jpegFileId)) {
+        blob = this.localFiles.get(p.jpegFileId);
+      } else {
+        try {
+          blob = await cacheStore.getBlob(p.jpegFileId);
+        } catch (_) {
+          blob = null;
+        }
+      }
+      if (!blob) continue;
+
+      try {
+        const exif = await ExifReader.readFromBlob(blob);
+        p.exif = exif || null;
+        if (exif && typeof exif.timestampMs === 'number') {
+          p.captureTimeMs = exif.timestampMs;
+          updated = true;
+        }
+      } catch (_) {
+        p.exif = null;
+      }
+    }
+
+    if (updated) {
+      this._computeBursts(this.allPhotos);
+    }
+    return updated;
+  }
+
   async _updateScrubPreview(index, clientX, token) {
     const preview = this.dom.scrubPreview;
     if (!preview || !this.filteredPhotos || index < 0 || index >= this.filteredPhotos.length) return;
@@ -620,7 +704,7 @@ class DarkCullApp {
     const photo = this.filteredPhotos[index];
 
     // Position tooltip horizontally near the finger, clamped safely inside viewport edges
-    const halfWidth = 88;
+    const halfWidth = 96;
     const clampedX = Math.max(halfWidth + 8, Math.min(window.innerWidth - halfWidth - 8, clientX));
     preview.style.left = `${clampedX}px`;
     preview.style.display = 'flex';
@@ -631,9 +715,22 @@ class DarkCullApp {
     if (this.dom.scrubPreviewName) {
       this.dom.scrubPreviewName.textContent = photo.jpegName || photo.rawName || photo.stem;
     }
+    this._applyBurstBadge(this.dom.scrubPreviewBurst, photo);
+    this._applyBurstBadge(this.dom.hudBurstBadge, photo);
+
     if (this.dom.scrubPreviewFill) {
       const pct = total > 1 ? ((index / (total - 1)) * 100).toFixed(1) : 100;
       this.dom.scrubPreviewFill.style.width = `${pct}%`;
+    }
+
+    // Backfill neighborhood EXIF timestamps on the fly if not yet parsed so burst fraction shows while scrubbing
+    if (!photo.captureTimeMs && photo.exif === undefined) {
+      this._ensureNeighborhoodBurstExif(photo).then((changed) => {
+        if (changed && preview.style.display !== 'none') {
+          this._applyBurstBadge(this.dom.scrubPreviewBurst, photo);
+          this._applyBurstBadge(this.dom.hudBurstBadge, photo);
+        }
+      });
     }
 
     // Resolve cached preview image without triggering network downloads during rapid scrubbing
@@ -1289,10 +1386,18 @@ class DarkCullApp {
    */
   async _scanCachedExifForBursts(token) {
     if (!this.allPhotos || this.allPhotos.length === 0) return;
-    let updated = false;
+    const total = this.allPhotos.length;
+    const curPhoto =
+      (this.currentIndex >= 0 && this.filteredPhotos[this.currentIndex]) ||
+      this._anchorPhoto;
+    const baseIdx = curPhoto ? Math.max(0, this.allPhotos.indexOf(curPhoto)) : 0;
 
-    for (let i = 0; i < this.allPhotos.length; i++) {
+    let updated = false;
+    let newlyParsed = 0;
+
+    for (let step = 0; step < total; step++) {
       if (token !== this.loadToken) return;
+      const i = (baseIdx + step) % total;
       const p = this.allPhotos[i];
       if (!p.jpegFileId) continue;
       if (p.exif !== undefined && p.captureTimeMs) continue;
@@ -1316,12 +1421,17 @@ class DarkCullApp {
           if (typeof exif.timestampMs === 'number') {
             p.captureTimeMs = exif.timestampMs;
             updated = true;
+            newlyParsed++;
           }
         }
       } catch (_) {}
 
-      // Yield periodically so the main thread stays 60fps responsive
-      if (i % 15 === 0) {
+      if (newlyParsed >= 20) {
+        newlyParsed = 0;
+        this._computeBursts(this.allPhotos);
+        this.updateHud();
+        await new Promise((r) => setTimeout(r, 0));
+      } else if (step % 15 === 0) {
         await new Promise((r) => setTimeout(r, 0));
       }
     }
@@ -1685,9 +1795,16 @@ class DarkCullApp {
       return;
     }
 
+    const curIdx = this.currentIndex;
+
     // 1. If already parsed and cached on photo object, display instantly (0ms)
     if (photo.exif !== undefined) {
       this._applyExifToDom(photo.exif);
+      this._ensureNeighborhoodBurstExif(photo).then((changed) => {
+        if (changed && this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
+          this.updateHud();
+        }
+      });
       return;
     }
 
@@ -1698,7 +1815,6 @@ class DarkCullApp {
     }
 
     // 2. Asynchronously parse EXIF from the first 128KB of JPEG blob without blocking rendering
-    const curIdx = this.currentIndex;
     try {
       const blob = await this.fetchPhotoBlob(photo);
       if (blob) {
@@ -1711,6 +1827,11 @@ class DarkCullApp {
             this.updateHud();
           }
         }
+        this._ensureNeighborhoodBurstExif(photo).then((changed) => {
+          if (changed && this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
+            this.updateHud();
+          }
+        });
         if (this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
           this._applyExifToDom(photo.exif);
         }
