@@ -237,7 +237,7 @@ export class DriveService {
       url.searchParams.set('q', query);
       url.searchParams.set('pageSize', '1000');
       // In Google API REST, fields list MUST NOT contain spaces after commas
-      url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,size,modifiedTime)');
+      url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,size,modifiedTime,imageMediaMetadata(time))');
       url.searchParams.set('supportsAllDrives', 'true');
       url.searchParams.set('includeItemsFromAllDrives', 'true');
       if (pageToken) {

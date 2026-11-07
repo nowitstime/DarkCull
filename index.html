@@ -19,29 +19,21 @@
   <div id="appRoot">
     <!-- Top HUD Bar -->
     <header class="top-hud">
-      <!-- Upper row: File info + Status + Settings -->
+      <!-- Upper row: Consolidated File Info + Sync Dot + Scrubber Counter + Utility Icons -->
       <div class="hud-row hud-top-row">
         <div class="hud-left-group">
           <div class="hud-pill hud-info-pill">
+            <span id="hudSyncDot" class="sync-dot sync-dot-synced" title="All XMP ratings synced"></span>
+            <button id="hudSyncBtn" class="hud-btn hud-inline-sync-btn" title="Sync Pending XMPs" style="display: none;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+            </button>
             <span id="hudFilename" class="hud-filename">DarkCull Ready</span>
-            <span id="hudIndex" class="hud-index">0 / 0</span>
-            <span id="hudStarBadge" class="hud-badge badge-unrated">★ 0</span>
-          </div>
-
-          <div id="hudExifPill" class="hud-pill hud-exif-pill" style="display: none;" title="Camera Exposure Settings">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            <span id="exifText" class="exif-text"></span>
+            <span id="hudFormatBadge" class="hud-format-badge" style="display: none;">[R+J]</span>
+            <span id="hudIndex" class="hud-index" title="Drag horizontally to scrub shoot">0 / 0</span>
           </div>
         </div>
 
         <div class="hud-actions">
-          <div class="hud-pill hud-sync-pill">
-            <span id="hudSyncBadge" class="hud-badge badge-synced">Synced</span>
-            <button id="hudSyncBtn" class="hud-btn" title="Sync Pending XMPs" style="display: none;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
-            </button>
-          </div>
-
           <button id="folderSelectBtn" class="hud-pill hud-action-btn" title="Open Google Drive Folder">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             <span class="btn-label">Drive</span>
@@ -58,7 +50,15 @@
         </div>
       </div>
 
-      <!-- Lower row: Live Tallies + Quick Filter Pills -->
+      <!-- Borderless Monospace EXIF + Minimal Burst Indicator Row -->
+      <div id="hudMetaRow" class="hud-meta-row">
+        <span id="hudBurstBadge" class="hud-burst-badge" style="display: none;" title="Burst Sequence"></span>
+        <div id="hudExifPill" class="hud-exif-row" style="display: none;" title="Camera Exposure Settings">
+          <span id="exifText" class="exif-text"></span>
+        </div>
+      </div>
+
+      <!-- Filter Row: Live Tallies (Desktop) + Horizontal Scrollable Filter Pills -->
       <div class="hud-row tally-filter-row">
         <div class="hud-pill tally-stats">
           <span class="tally-item">All: <strong id="tallyTotal">0</strong></span>
@@ -93,6 +93,21 @@
         </div>
       </div>
     </header>
+
+    <!-- Floating Touch-Drag Scrubber Preview -->
+    <div id="scrubPreview" class="scrub-preview" style="display: none;" aria-hidden="true">
+      <div class="scrub-thumb-wrap">
+        <img id="scrubThumbImg" class="scrub-thumb-img" alt="" style="display: none;" />
+        <div id="scrubThumbPlaceholder" class="scrub-thumb-placeholder">📷</div>
+      </div>
+      <div class="scrub-meta">
+        <span id="scrubPreviewIndex" class="scrub-preview-index">0 / 0</span>
+        <span id="scrubPreviewName" class="scrub-preview-name"></span>
+        <div class="scrub-track">
+          <div id="scrubPreviewFill" class="scrub-track-fill"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- Center Viewport -->
     <main id="viewport" class="viewport-container">
@@ -300,7 +315,7 @@
         <div class="settings-version-footer">
           <div class="version-info">
             <span class="version-label">DarkCull Version</span>
-            <span id="appVersionText" class="version-badge">v1.1</span>
+            <span id="appVersionText" class="version-badge">v1.2</span>
           </div>
           <button id="updateAppBtn" class="btn-secondary update-app-btn" type="button">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>

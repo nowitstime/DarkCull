@@ -19,7 +19,7 @@ const RAW_EXTS = new Set([
   'GPR', 'PEF', '3FR', 'FFF', 'X3F', 'SRW', 'CRW'
 ]);
 const JPEG_EXTS = new Set(['JPG', 'JPEG', 'JPE', 'JFIF']);
-export const APP_VERSION = '1.1';
+export const APP_VERSION = '1.2';
 
 class DarkCullApp {
   constructor() {
@@ -47,20 +47,30 @@ class DarkCullApp {
     this.xmpSources = new Map(); // photo.id -> xmp file record (local mode)
     this.localFiles = new Map(); // jpegFileId -> File (local mode, in-memory)
     this.localDirHandle = null; // Used in local mode
+    this._scrubThumbUrl = null; // Temporary object URL used by the floating scrub preview
 
     // Elements
     this.dom = {
       // Top HUD
+      hudSyncDot: document.getElementById('hudSyncDot'),
+      hudSyncBtn: document.getElementById('hudSyncBtn'),
       hudFilename: document.getElementById('hudFilename'),
+      hudFormatBadge: document.getElementById('hudFormatBadge'),
       hudIndex: document.getElementById('hudIndex'),
-      hudStarBadge: document.getElementById('hudStarBadge'),
+      hudBurstBadge: document.getElementById('hudBurstBadge'),
       hudExifPill: document.getElementById('hudExifPill'),
       exifText: document.getElementById('exifText'),
-      hudSyncBadge: document.getElementById('hudSyncBadge'),
-      hudSyncBtn: document.getElementById('hudSyncBtn'),
       cacheProgressBar: document.getElementById('cacheProgressBar'),
       cacheProgressText: document.getElementById('cacheProgressText'),
       cacheProgressFill: document.getElementById('cacheProgressFill'),
+
+      // Floating Touch-Drag Scrub Preview
+      scrubPreview: document.getElementById('scrubPreview'),
+      scrubThumbImg: document.getElementById('scrubThumbImg'),
+      scrubThumbPlaceholder: document.getElementById('scrubThumbPlaceholder'),
+      scrubPreviewIndex: document.getElementById('scrubPreviewIndex'),
+      scrubPreviewName: document.getElementById('scrubPreviewName'),
+      scrubPreviewFill: document.getElementById('scrubPreviewFill'),
 
       // Tally & Filter
       tallyTotal: document.getElementById('tallyTotal'),
@@ -455,10 +465,18 @@ class DarkCullApp {
       });
     }
 
-    // Sync button (user-initiated click: allow interactive OAuth popup if token expired)
+    // Sync button & dot (user-initiated click: allow interactive OAuth popup if token expired)
     this.dom.hudSyncBtn.addEventListener('click', () => {
       this.flushSyncQueue(true);
     });
+    if (this.dom.hudSyncDot) {
+      this.dom.hudSyncDot.addEventListener('click', () => {
+        this.flushSyncQueue(true);
+      });
+    }
+
+    // Touch-drag scrubber on photo counter (#hudIndex)
+    this._initScrubber();
 
     // Online / Offline listeners
     window.addEventListener('online', () => {
@@ -469,6 +487,217 @@ class DarkCullApp {
       this.showToast('Offline mode active. Ratings saved locally.');
       this.updateSyncBadge();
     });
+  }
+
+  /**
+   * Initializes horizontal touch-drag (and mouse-drag) scrubbing on the photo index counter (`91 / 906`).
+   * Displays a floating preview thumbnail + target index/filename while dragging and commits on release.
+   */
+  _initScrubber() {
+    const el = this.dom.hudIndex;
+    if (!el) return;
+
+    let active = false;
+    let moved = false;
+    let startX = 0;
+    let startIndex = 0;
+    let targetIndex = 0;
+    let scrubToken = 0;
+
+    const beginScrub = (clientX) => {
+      if (!this.filteredPhotos || this.filteredPhotos.length <= 1) return false;
+      active = true;
+      moved = false;
+      startX = clientX;
+      startIndex = Math.max(0, this.currentIndex);
+      targetIndex = startIndex;
+      el.classList.add('is-scrubbing');
+      this._updateScrubPreview(targetIndex, clientX, ++scrubToken);
+      return true;
+    };
+
+    const moveScrub = (clientX) => {
+      if (!active) return;
+      const total = this.filteredPhotos.length;
+      if (total <= 1) return;
+
+      const deltaX = clientX - startX;
+      if (Math.abs(deltaX) > 4) moved = true;
+
+      // Map a comfortable horizontal drag span (~65% of screen width, clamped 180..320px) across the filtered list
+      const spanPx = Math.max(180, Math.min(window.innerWidth * 0.65, 320));
+      const deltaItems = Math.round((deltaX / spanPx) * (total - 1));
+      const nextIdx = Math.max(0, Math.min(total - 1, startIndex + deltaItems));
+
+      // Keep the counter live in the top pill while scrubbing
+      el.textContent = `${nextIdx + 1} / ${total}`;
+
+      if (nextIdx !== targetIndex || moved) {
+        targetIndex = nextIdx;
+        this._updateScrubPreview(targetIndex, clientX, ++scrubToken);
+      }
+    };
+
+    const endScrub = (commit = true) => {
+      if (!active) return;
+      active = false;
+      scrubToken++;
+      el.classList.remove('is-scrubbing');
+      this._hideScrubPreview();
+
+      if (commit && moved && targetIndex !== this.currentIndex && targetIndex >= 0 && targetIndex < this.filteredPhotos.length) {
+        if (this.currentIndex >= 0 && this.filteredPhotos[this.currentIndex]) {
+          this.undoStack.push({
+            type: 'nav',
+            navLabel: 'scrub',
+            photoId: this.filteredPhotos[this.currentIndex].id,
+          });
+          if (this.undoStack.length > 50) this.undoStack.shift();
+        }
+        this.currentIndex = targetIndex;
+        this.renderCurrentPhoto();
+      } else {
+        this.updateHud();
+      }
+    };
+
+    // Touch events
+    el.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length !== 1) return;
+        if (beginScrub(e.touches[0].clientX)) {
+          e.stopPropagation();
+        }
+      },
+      { passive: true }
+    );
+
+    el.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!active || e.touches.length !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        moveScrub(e.touches[0].clientX);
+      },
+      { passive: false }
+    );
+
+    el.addEventListener('touchend', (e) => {
+      if (!active) return;
+      e.stopPropagation();
+      endScrub(true);
+    });
+
+    el.addEventListener('touchcancel', () => {
+      endScrub(false);
+    });
+
+    // Desktop mouse fallback for testing/laptop trackpads
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (!beginScrub(e.clientX)) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const onMouseMove = (ev) => moveScrub(ev.clientX);
+      const onMouseUp = () => {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+        endScrub(true);
+      };
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    });
+  }
+
+  async _updateScrubPreview(index, clientX, token) {
+    const preview = this.dom.scrubPreview;
+    if (!preview || !this.filteredPhotos || index < 0 || index >= this.filteredPhotos.length) return;
+
+    const total = this.filteredPhotos.length;
+    const photo = this.filteredPhotos[index];
+
+    // Position tooltip horizontally near the finger, clamped safely inside viewport edges
+    const halfWidth = 88;
+    const clampedX = Math.max(halfWidth + 8, Math.min(window.innerWidth - halfWidth - 8, clientX));
+    preview.style.left = `${clampedX}px`;
+    preview.style.display = 'flex';
+
+    if (this.dom.scrubPreviewIndex) {
+      this.dom.scrubPreviewIndex.textContent = `${index + 1} / ${total}`;
+    }
+    if (this.dom.scrubPreviewName) {
+      this.dom.scrubPreviewName.textContent = photo.jpegName || photo.rawName || photo.stem;
+    }
+    if (this.dom.scrubPreviewFill) {
+      const pct = total > 1 ? ((index / (total - 1)) * 100).toFixed(1) : 100;
+      this.dom.scrubPreviewFill.style.width = `${pct}%`;
+    }
+
+    // Resolve cached preview image without triggering network downloads during rapid scrubbing
+    const imgEl = this.dom.scrubThumbImg;
+    const placeholderEl = this.dom.scrubThumbPlaceholder;
+
+    // 1. Check in-memory ViewportEngine preload cache first (0ms)
+    const preloaded = this.viewportEngine && this.viewportEngine.preloaded.get(photo.id);
+    if (preloaded && preloaded.url) {
+      if (this._scrubThumbUrl) {
+        URL.revokeObjectURL(this._scrubThumbUrl);
+        this._scrubThumbUrl = null;
+      }
+      imgEl.src = preloaded.url;
+      imgEl.style.display = 'block';
+      placeholderEl.style.display = 'none';
+      return;
+    }
+
+    if (!photo.jpegFileId) {
+      imgEl.style.display = 'none';
+      placeholderEl.textContent = 'RAW Only';
+      placeholderEl.style.display = 'block';
+      return;
+    }
+
+    // 2. Check local File handle map or IndexedDB blob store
+    let blob = null;
+    if (this.mode === 'local' && this.localFiles.has(photo.jpegFileId)) {
+      blob = this.localFiles.get(photo.jpegFileId);
+    } else {
+      try {
+        blob = await cacheStore.getBlob(photo.jpegFileId);
+      } catch (_) {
+        blob = null;
+      }
+    }
+
+    // Discard if user has already scrubbed to a newer frame or released finger
+    if (preview.style.display === 'none') return;
+
+    if (blob) {
+      if (this._scrubThumbUrl) {
+        URL.revokeObjectURL(this._scrubThumbUrl);
+      }
+      this._scrubThumbUrl = URL.createObjectURL(blob);
+      imgEl.src = this._scrubThumbUrl;
+      imgEl.style.display = 'block';
+      placeholderEl.style.display = 'none';
+    } else {
+      imgEl.style.display = 'none';
+      placeholderEl.textContent = photo.stem;
+      placeholderEl.style.display = 'block';
+    }
+  }
+
+  _hideScrubPreview() {
+    if (this.dom.scrubPreview) {
+      this.dom.scrubPreview.style.display = 'none';
+    }
+    if (this._scrubThumbUrl) {
+      URL.revokeObjectURL(this._scrubThumbUrl);
+      this._scrubThumbUrl = null;
+    }
   }
 
   showToast(msg) {
@@ -568,6 +797,8 @@ class DarkCullApp {
       if (!s) continue;
       if (!p.xmpFileId && s.xmpFileId) p.xmpFileId = s.xmpFileId;
       if (s.cachedBlob) p.cachedBlob = true;
+      if (!p.captureTimeMs && s.captureTimeMs) p.captureTimeMs = s.captureTimeMs;
+      if (!p.exif && s.exif) p.exif = s.exif;
       if (dirtyIds.has(p.id)) {
         p.rating = s.rating === 1 || s.rating === 2 ? 0 : s.rating;
         p.syncStatus = 'dirty';
@@ -577,6 +808,7 @@ class DarkCullApp {
         p.rating = s.rating === 1 || s.rating === 2 ? 0 : s.rating;
       }
     }
+    this._computeBursts(photos);
   }
 
   /**
@@ -827,6 +1059,7 @@ class DarkCullApp {
   async loadShootFromCache(shoot) {
     this.currentShoot = shoot;
     this.mode = shoot.type || 'gdrive';
+    const token = ++this.loadToken;
     const photos = await cacheStore.getPhotosByFolder(shoot.folderId);
     if (photos && photos.length > 0) {
       // Normalize any legacy darktable default 1 or 2 ratings to 0 (Unrated)
@@ -835,6 +1068,7 @@ class DarkCullApp {
           p.rating = 0;
         }
       }
+      this._computeBursts(photos);
       this.allPhotos = photos;
       this.filteredPhotos = [];
       this.currentIndex = -1;
@@ -848,6 +1082,9 @@ class DarkCullApp {
           ? ` — resumed at ${this.currentIndex + 1}/${this.filteredPhotos.length}`
           : '';
       this.showToast(`Restored shoot: ${shoot.name} (${photos.length} photos${posText})`);
+
+      // Backfill EXIF capture timestamps from cached JPEG blobs if any are missing
+      this._scanCachedExifForBursts(token);
     }
   }
 
@@ -953,6 +1190,13 @@ class DarkCullApp {
       // Darktable standard sidecar name
       const xmpName = XmpBuilder.determineSidecarName(rawName, jpegName);
 
+      // Extract EXIF capture timestamp if provided in Drive imageMediaMetadata
+      const metaTimeStr =
+        entry.jpegFile?.imageMediaMetadata?.time ||
+        entry.rawFile?.imageMediaMetadata?.time ||
+        null;
+      const captureTimeMs = metaTimeStr ? ExifReader.parseExifTimestamp(metaTimeStr) : null;
+
       const photo = {
         id: `${folderId}:${stem}`,
         folderId,
@@ -968,6 +1212,9 @@ class DarkCullApp {
         syncStatus: 'synced',
         // false until the existing .xmp has been read in the background
         ratingLoaded: !entry.xmpFile,
+        captureTimeMs,
+        burstIndex: 0,
+        burstTotal: 0,
       };
 
       if (entry.xmpFile) this.xmpSources.set(photo.id, entry.xmpFile);
@@ -976,7 +1223,114 @@ class DarkCullApp {
 
     // Sort alphabetically by stem
     photos.sort((a, b) => a.stem.localeCompare(b.stem, undefined, { numeric: true }));
+
+    // Compute initial burst groupings from any available capture timestamps
+    this._computeBursts(photos);
     return photos;
+  }
+
+  /**
+   * Timestamp-Based Burst Detection:
+   * Compares EXIF DateTimeOriginal (captureTimeMs or exif.timestampMs, <= 1.5s / 1500ms delta
+   * between consecutive files in the sorted photo array) to identify contiguous burst sequences of 2+ photos.
+   * Sets `photo.burstIndex` (1..N) and `photo.burstTotal` (N) on burst members, or 0 on single frames.
+   */
+  _computeBursts(photos = this.allPhotos) {
+    if (!photos || photos.length === 0) return;
+
+    const getTs = (p) => {
+      if (typeof p.captureTimeMs === 'number' && !Number.isNaN(p.captureTimeMs)) {
+        return p.captureTimeMs;
+      }
+      if (p.exif && typeof p.exif.timestampMs === 'number' && !Number.isNaN(p.exif.timestampMs)) {
+        return p.exif.timestampMs;
+      }
+      return null;
+    };
+
+    const BURST_THRESHOLD_MS = 1500; // <= 1.5s between consecutive frames
+    let runStart = 0;
+
+    const commitRun = (start, endExclusive) => {
+      const len = endExclusive - start;
+      for (let idx = start; idx < endExclusive; idx++) {
+        if (len >= 2) {
+          photos[idx].burstIndex = idx - start + 1;
+          photos[idx].burstTotal = len;
+        } else {
+          photos[idx].burstIndex = 0;
+          photos[idx].burstTotal = 0;
+        }
+      }
+    };
+
+    for (let i = 1; i <= photos.length; i++) {
+      if (i === photos.length) {
+        commitRun(runStart, i);
+        break;
+      }
+      const prevTs = getTs(photos[i - 1]);
+      const curTs = getTs(photos[i]);
+      const delta = prevTs !== null && curTs !== null ? Math.abs(curTs - prevTs) : Infinity;
+
+      if (delta <= BURST_THRESHOLD_MS) {
+        // Contiguous burst frame
+        continue;
+      } else {
+        commitRun(runStart, i);
+        runStart = i;
+      }
+    }
+  }
+
+  /**
+   * Lightweight background pass over cached JPEG blobs to backfill EXIF DateTimeOriginal
+   * (including sub-seconds) for any photos missing `captureTimeMs`, then refreshes burst badges.
+   */
+  async _scanCachedExifForBursts(token) {
+    if (!this.allPhotos || this.allPhotos.length === 0) return;
+    let updated = false;
+
+    for (let i = 0; i < this.allPhotos.length; i++) {
+      if (token !== this.loadToken) return;
+      const p = this.allPhotos[i];
+      if (!p.jpegFileId) continue;
+      if (p.exif !== undefined && p.captureTimeMs) continue;
+
+      let blob = null;
+      if (this.mode === 'local' && this.localFiles.has(p.jpegFileId)) {
+        blob = this.localFiles.get(p.jpegFileId);
+      } else {
+        try {
+          blob = await cacheStore.getBlob(p.jpegFileId);
+        } catch (_) {
+          blob = null;
+        }
+      }
+      if (!blob) continue;
+
+      try {
+        const exif = await ExifReader.readFromBlob(blob);
+        if (exif) {
+          p.exif = exif;
+          if (typeof exif.timestampMs === 'number') {
+            p.captureTimeMs = exif.timestampMs;
+            updated = true;
+          }
+        }
+      } catch (_) {}
+
+      // Yield periodically so the main thread stays 60fps responsive
+      if (i % 15 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    if (updated && token === this.loadToken) {
+      this._computeBursts(this.allPhotos);
+      this.updateHud();
+      cacheStore.savePhotos(this.allPhotos).catch(() => {});
+    }
   }
 
   // --- Image Blob Retrieval & Concurrency Pool Downloader ---
@@ -999,6 +1353,20 @@ class DarkCullApp {
       if (blob) {
         await cacheStore.saveBlob(key, blob);
         photo.cachedBlob = true;
+        // Opportunistically parse EXIF header (reads only first 128KB) for sub-second burst detection
+        if (photo.exif === undefined) {
+          try {
+            const exif = await ExifReader.readFromBlob(blob);
+            photo.exif = exif || null;
+            if (exif && typeof exif.timestampMs === 'number') {
+              photo.captureTimeMs = exif.timestampMs;
+              this._computeBursts(this.allPhotos);
+              if (this.filteredPhotos[this.currentIndex] === photo) {
+                this.updateHud();
+              }
+            }
+          } catch (_) {}
+        }
       }
       return blob;
     })().finally(() => this.inflight.delete(key));
@@ -1061,6 +1429,7 @@ class DarkCullApp {
       this._cachingToken = null;
       this._showProgress(`All ${total} photos cached locally ✓`, 100);
       this._hideProgress(3000);
+      this._scanCachedExifForBursts(token);
       return;
     }
 
@@ -1100,6 +1469,7 @@ class DarkCullApp {
       this._showProgress(`Finished caching ${total} JPEGs ✓`, 100);
       this._hideProgress(4000);
     }
+    this._scanCachedExifForBursts(token);
     await this._updateStorageStatus();
   }
 
@@ -1241,9 +1611,9 @@ class DarkCullApp {
   updateHud() {
     if (this.currentIndex < 0 || this.filteredPhotos.length === 0) {
       this.dom.hudFilename.textContent = this.allPhotos.length > 0 ? `No photos in filter` : 'No photos';
+      if (this.dom.hudFormatBadge) this.dom.hudFormatBadge.style.display = 'none';
       this.dom.hudIndex.textContent = '0 / 0';
-      this.dom.hudStarBadge.textContent = '★ -';
-      this.dom.hudStarBadge.className = 'hud-badge badge-unrated';
+      if (this.dom.hudBurstBadge) this.dom.hudBurstBadge.style.display = 'none';
       if (this.dom.dockStatusPill) {
         this.dom.dockStatusPill.textContent = 'No Photo';
         this.dom.dockStatusPill.className = 'dock-status-pill status-unrated';
@@ -1253,31 +1623,46 @@ class DarkCullApp {
     }
 
     const photo = this.filteredPhotos[this.currentIndex];
-    const rawTag = photo.rawName ? ` [RAW: ${photo.rawName}]` : '';
-    this.dom.hudFilename.textContent = `${photo.jpegName || photo.stem}${rawTag}`;
+    this.dom.hudFilename.textContent = photo.jpegName || photo.rawName || photo.stem;
+
+    // Condensed format badge ([R+J], [RAW], [JPG]) so filename & counter fit without truncation
+    if (this.dom.hudFormatBadge) {
+      if (photo.rawFileId && photo.jpegFileId) {
+        this.dom.hudFormatBadge.textContent = '[R+J]';
+        this.dom.hudFormatBadge.style.display = 'inline-block';
+      } else if (photo.rawFileId) {
+        this.dom.hudFormatBadge.textContent = '[RAW]';
+        this.dom.hudFormatBadge.style.display = 'inline-block';
+      } else if (photo.jpegFileId) {
+        this.dom.hudFormatBadge.textContent = '[JPG]';
+        this.dom.hudFormatBadge.style.display = 'inline-block';
+      } else {
+        this.dom.hudFormatBadge.style.display = 'none';
+      }
+    }
+
     this.dom.hudIndex.textContent = `${this.currentIndex + 1} / ${this.filteredPhotos.length}`;
 
-    // Update top HUD rating badge and bottom dock status pill
-    const badge = this.dom.hudStarBadge;
+    // Minimal Burst Indicator: only show when photo belongs to a burst of 2+ photos; zero noise on singles
+    if (this.dom.hudBurstBadge) {
+      if (photo.burstTotal && photo.burstTotal >= 2) {
+        this.dom.hudBurstBadge.textContent = `⧉ ${photo.burstIndex}/${photo.burstTotal}`;
+        this.dom.hudBurstBadge.style.display = 'inline-flex';
+      } else {
+        this.dom.hudBurstBadge.style.display = 'none';
+      }
+    }
+
+    // Update bottom dock status pill (single source of rating state)
     const dockPill = this.dom.dockStatusPill;
-    if (photo.rating === -1) {
-      badge.textContent = '✕ REJECTED';
-      badge.className = 'hud-badge badge-reject';
-      if (dockPill) {
+    if (dockPill) {
+      if (photo.rating === -1) {
         dockPill.textContent = '✕ Rejected';
         dockPill.className = 'dock-status-pill status-reject';
-      }
-    } else if (!photo.rating || photo.rating === 0) {
-      badge.textContent = '★ 0';
-      badge.className = 'hud-badge badge-unrated';
-      if (dockPill) {
+      } else if (!photo.rating || photo.rating === 0) {
         dockPill.textContent = 'Unrated';
         dockPill.className = 'dock-status-pill status-unrated';
-      }
-    } else {
-      badge.textContent = `★ ${photo.rating}`;
-      badge.className = `hud-badge badge-rated rate-${photo.rating}`;
-      if (dockPill) {
+      } else {
         dockPill.textContent = photo.rating === 1 ? '★ 1 Star' : `★ ${photo.rating} Stars`;
         dockPill.className = `dock-status-pill status-rated rate-${photo.rating}`;
       }
@@ -1319,6 +1704,13 @@ class DarkCullApp {
       if (blob) {
         const exif = await ExifReader.readFromBlob(blob);
         photo.exif = exif || null;
+        if (exif && typeof exif.timestampMs === 'number' && !photo.captureTimeMs) {
+          photo.captureTimeMs = exif.timestampMs;
+          this._computeBursts(this.allPhotos);
+          if (this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
+            this.updateHud();
+          }
+        }
         if (this.currentIndex === curIdx && this.filteredPhotos[this.currentIndex] === photo) {
           this._applyExifToDom(photo.exif);
         }
@@ -1412,6 +1804,8 @@ class DarkCullApp {
       const actionName =
         action.navLabel === 'back'
           ? 'Back'
+          : action.navLabel === 'scrub'
+          ? 'Scrub'
           : action.navLabel === 'skip' || action.type === 'skip'
           ? 'Skip'
           : 'Next';
@@ -1535,29 +1929,45 @@ class DarkCullApp {
   async updateSyncBadge() {
     const queue = await cacheStore.getPendingSyncItems();
     const count = queue.length;
-    const badge = this.dom.hudSyncBadge;
+    const dot = this.dom.hudSyncDot;
 
     if (count === 0) {
-      badge.textContent = 'Synced';
-      badge.className = 'hud-badge badge-synced';
-      this.dom.hudSyncBtn.style.display = 'none';
+      if (dot) {
+        dot.className = 'sync-dot sync-dot-synced';
+        dot.title = 'All ratings synced';
+      }
+      if (this.dom.hudSyncBtn) {
+        this.dom.hudSyncBtn.style.display = 'none';
+      }
       return;
     }
 
     const stuckLocal = queue.filter((i) => !this._canSyncItem(i)).length;
     const hasGdrive = queue.some((i) => i.mode === 'gdrive');
 
+    let statusTitle = '';
+    let isErrorOrOffline = false;
+
     if (stuckLocal === count) {
-      badge.textContent = `${count} unsynced — reopen folder`;
+      statusTitle = `${count} unsynced — reopen folder`;
+      isErrorOrOffline = true;
     } else if (!navigator.onLine && hasGdrive) {
-      badge.textContent = `${count} queued (offline)`;
+      statusTitle = `${count} queued (offline)`;
+      isErrorOrOffline = true;
     } else if (this.isSyncing) {
-      badge.textContent = `Syncing ${count} XMP${count === 1 ? '' : 's'}...`;
+      statusTitle = `Syncing ${count} XMP${count === 1 ? '' : 's'}...`;
     } else {
-      badge.textContent = `${count} unsynced — tap ↻`;
+      statusTitle = `${count} unsynced — tap to sync`;
     }
-    badge.className = 'hud-badge badge-syncing';
-    this.dom.hudSyncBtn.style.display = 'inline-block';
+
+    if (dot) {
+      dot.className = isErrorOrOffline ? 'sync-dot sync-dot-error' : 'sync-dot sync-dot-syncing';
+      dot.title = statusTitle;
+    }
+    if (this.dom.hudSyncBtn) {
+      this.dom.hudSyncBtn.style.display = this.isSyncing ? 'none' : 'inline-flex';
+      this.dom.hudSyncBtn.title = statusTitle;
+    }
   }
 
   /** Local-folder items can only be written while that folder's handle is open this session. */

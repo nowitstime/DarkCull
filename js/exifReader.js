@@ -91,6 +91,21 @@ export class ExifReader {
 
       const ifd0Entries = view.getUint16(ifd0Offset, littleEndian);
       let exifSubIfdOffset = -1;
+      let ifd0DateTimeStr = null;
+
+      const readAsciiString = (entryOffset) => {
+        const count = view.getUint32(entryOffset + 4, littleEndian);
+        if (count <= 0 || count > 64) return null;
+        const valOffset = count <= 4 ? entryOffset + 8 : tiffOffset + view.getUint32(entryOffset + 8, littleEndian);
+        if (valOffset + count > view.byteLength) return null;
+        let str = '';
+        for (let c = 0; c < count - 1; c++) {
+          const ch = view.getUint8(valOffset + c);
+          if (ch === 0) break;
+          str += String.fromCharCode(ch);
+        }
+        return str.trim();
+      };
 
       for (let i = 0; i < ifd0Entries; i++) {
         const entryOffset = ifd0Offset + 2 + i * 12;
@@ -99,7 +114,9 @@ export class ExifReader {
         if (tag === 0x8769) {
           // Exif IFD Pointer
           exifSubIfdOffset = tiffOffset + view.getUint32(entryOffset + 8, littleEndian);
-          break;
+        } else if (tag === 0x0132) {
+          // ModifyDate / DateTime fallback
+          ifd0DateTimeStr = readAsciiString(entryOffset);
         }
       }
 
@@ -112,6 +129,9 @@ export class ExifReader {
         iso: null,
         exposureCompensation: null,
         focalLength: null,
+        dateTimeOriginal: null,
+        subSecTimeOriginal: null,
+        timestampMs: null,
         formatted: '',
       };
 
@@ -194,7 +214,18 @@ export class ExifReader {
           if (fl !== null) {
             result.focalLength = `${fl % 1 === 0 ? fl : fl.toFixed(1)}mm`;
           }
+        } else if (tag === 0x9003 || (tag === 0x9004 && !result.dateTimeOriginal)) {
+          // DateTimeOriginal (0x9003) or DateTimeDigitized (0x9004)
+          result.dateTimeOriginal = readAsciiString(entryOffset);
+        } else if (tag === 0x9291 || (tag === 0x9290 && !result.subSecTimeOriginal)) {
+          // SubSecTimeOriginal (0x9291) or SubSecTime (0x9290)
+          result.subSecTimeOriginal = readAsciiString(entryOffset);
         }
+      }
+
+      const rawDateStr = result.dateTimeOriginal || ifd0DateTimeStr;
+      if (rawDateStr) {
+        result.timestampMs = this.parseExifTimestamp(rawDateStr, result.subSecTimeOriginal);
       }
 
       const parts = [];
@@ -210,5 +241,32 @@ export class ExifReader {
       console.warn('EXIF parse error:', err);
       return null;
     }
+  }
+
+  /**
+   * Converts EXIF DateTimeOriginal ("YYYY:MM:DD HH:MM:SS") + optional SubSecTimeOriginal ("45")
+   * into epoch milliseconds.
+   */
+  static parseExifTimestamp(dateStr, subSecStr = null) {
+    if (!dateStr || typeof dateStr !== 'string') return null;
+    const m = dateStr.match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const year = parseInt(m[1], 10);
+    const month = parseInt(m[2], 10) - 1;
+    const day = parseInt(m[3], 10);
+    const hour = parseInt(m[4], 10);
+    const min = parseInt(m[5], 10);
+    const sec = parseInt(m[6], 10);
+
+    let ms = 0;
+    if (subSecStr) {
+      const digits = String(subSecStr).replace(/\D/g, '');
+      if (digits.length > 0) {
+        ms = Math.round(parseFloat(`0.${digits}`) * 1000);
+      }
+    }
+
+    const ts = Date.UTC(year, month, day, hour, min, sec, ms);
+    return Number.isNaN(ts) ? null : ts;
   }
 }

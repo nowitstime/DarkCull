@@ -120,86 +120,221 @@ button.hud-pill:hover,
   pointer-events: auto;
 }
 
-.hud-exif-pill {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  color: #60a5fa;
-  background: rgba(15, 23, 42, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  padding: 6px 12px;
-  gap: 6px;
-  white-space: nowrap;
-  letter-spacing: 0.2px;
-}
-
-.exif-icon {
-  color: #3b82f6;
-  flex-shrink: 0;
-}
-
 .hud-info-pill {
   min-width: 0;
-  flex: 1 1 auto;
-  max-width: fit-content;
+  flex: 0 1 auto;
+  max-width: 100%;
+  gap: 7px;
+  padding: 6px 12px;
+}
+
+/* 8px Compact Sync Status Dot */
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sync-dot-synced {
+  background-color: var(--synced-color);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
+}
+
+.sync-dot-syncing {
+  background-color: var(--syncing-color);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  animation: pulseSync 1.2s ease-in-out infinite;
+}
+
+.sync-dot-error {
+  background-color: var(--reject-color);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+}
+
+.hud-inline-sync-btn {
+  padding: 2px;
+  margin-left: -2px;
+  color: var(--syncing-color);
 }
 
 .hud-filename {
   font-weight: 600;
   color: #ffffff;
-  letter-spacing: 0.3px;
-  max-width: 240px;
+  letter-spacing: 0.2px;
+  max-width: 340px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.hud-format-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #9ca3af;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.2px;
+}
+
 .hud-index {
-  color: var(--text-muted);
+  color: #d1d5db;
   font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex-shrink: 0;
+  padding: 2px 7px;
+  margin: -2px -4px -2px 0;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.hud-index:hover,
+.hud-index.is-scrubbing {
+  background: rgba(59, 130, 246, 0.28);
+  color: #ffffff;
+}
+
+/* Borderless EXIF + Minimal Burst Indicator Row */
+.hud-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 4px;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.hud-burst-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #d1d5db;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 1px 7px;
+  border-radius: 9999px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.hud-exif-row {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  color: #888888;
+  background: transparent;
+  border: none;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* Floating Touch-Drag Scrubber Preview */
+.scrub-preview {
+  position: fixed;
+  top: 98px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px 8px 8px;
+  background: rgba(16, 16, 20, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85);
+  z-index: 120;
+  pointer-events: none;
+  min-width: 210px;
+  max-width: 90vw;
+}
+
+.scrub-thumb-wrap {
+  width: 56px;
+  height: 42px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #09090b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-.hud-badge {
+.scrub-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scrub-thumb-placeholder {
+  font-size: 16px;
+  opacity: 0.45;
+}
+
+.scrub-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.scrub-preview-index {
+  font-size: 13px;
+  font-weight: 800;
+  color: #60a5fa;
+  font-variant-numeric: tabular-nums;
+}
+
+.scrub-preview-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  color: #e5e7eb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
 }
 
-.badge-unrated {
-  background: rgba(156, 163, 175, 0.2);
-  color: #9ca3af;
+.scrub-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-top: 2px;
 }
 
-.badge-reject {
-  background: rgba(239, 68, 68, 0.25);
-  color: var(--reject-color);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-}
-
-.badge-rated {
-  background: rgba(250, 204, 21, 0.2);
-  color: var(--star-color);
-  border: 1px solid rgba(250, 204, 21, 0.4);
-}
-
-.badge-synced {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--synced-color);
-}
-
-.badge-syncing {
-  background: rgba(245, 158, 11, 0.25);
-  color: var(--syncing-color);
-  animation: pulseSync 1.5s infinite;
+.scrub-track-fill {
+  width: 0%;
+  height: 100%;
+  background: #3b82f6;
 }
 
 @keyframes pulseSync {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  50% { opacity: 0.45; }
 }
 
 .hud-btn {
@@ -224,8 +359,9 @@ button.hud-pill:hover,
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  width: 100%;
 }
 
 .tally-stats {
@@ -234,6 +370,7 @@ button.hud-pill:hover,
   gap: 8px;
   color: var(--text-muted);
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .tally-item strong {
@@ -250,11 +387,22 @@ button.hud-pill:hover,
 
 .filter-group {
   display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 4px;
-  background: rgba(18, 18, 20, 0.7);
+  background: rgba(18, 18, 20, 0.72);
   padding: 3px;
   border-radius: 9999px;
   border: 1px solid var(--surface-border);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.filter-group::-webkit-scrollbar {
+  display: none;
 }
 
 .filter-pill {
@@ -266,6 +414,8 @@ button.hud-pill:hover,
   cursor: pointer;
   background: transparent;
   border: none;
+  white-space: nowrap;
+  flex: 0 0 auto;
   transition: all 0.15s ease;
 }
 
@@ -1026,24 +1176,46 @@ button.hud-pill:hover,
     top: 8px;
     left: 8px;
     right: 8px;
-    gap: 5px;
+    gap: 4px;
   }
   .hud-top-row {
-    gap: 4px;
-    align-items: flex-start;
+    gap: 6px;
+    align-items: center;
   }
   .hud-left-group {
     gap: 4px;
-    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
-  #hudStarBadge {
-    display: none; /* Shown prominently in #dockStatusPill at bottom on mobile */
+  .hud-info-pill {
+    padding: 5px 10px;
+    font-size: 11.5px;
+    gap: 6px;
+    max-width: 100%;
   }
-  .hud-exif-pill {
-    padding: 3px 7px;
+  .hud-filename {
+    max-width: none;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .hud-format-badge {
     font-size: 10px;
-    gap: 4px;
-    border-radius: 6px;
+    padding: 1px 4px;
+  }
+  .hud-index {
+    font-size: 11.5px;
+    padding: 2px 6px;
+  }
+  .hud-meta-row {
+    gap: 6px;
+    padding-left: 2px;
+  }
+  .hud-burst-badge {
+    font-size: 10.5px;
+    padding: 1px 6px;
+  }
+  .hud-exif-row {
+    font-size: 10.5px;
   }
   .hud-pill {
     padding: 5px 9px;
@@ -1055,9 +1227,6 @@ button.hud-pill:hover,
   }
   .hud-action-btn .btn-label {
     display: none;
-  }
-  .hud-filename {
-    max-width: 130px;
   }
   .hud-actions {
     gap: 4px;
@@ -1073,14 +1242,15 @@ button.hud-pill:hover,
   .filter-group {
     width: 100%;
     overflow-x: auto;
-    justify-content: space-between;
+    justify-content: flex-start;
     scrollbar-width: none;
+    padding: 3px 5px;
   }
   .filter-group::-webkit-scrollbar {
     display: none;
   }
   .filter-pill {
-    padding: 5px 7px;
+    padding: 5px 8px;
     font-size: 11px;
     white-space: nowrap;
     flex: 1 0 auto;
