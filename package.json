@@ -1,0 +1,19 @@
+{
+  "name": "darkcull",
+  "version": "1.6.0",
+  "description": "Offline-First Google Drive & Local Photo Culling PWA for darktable",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "keywords": [
+    "darktable",
+    "photo-culling",
+    "pwa",
+    "offline-first",
+    "xmp",
+    "raw"
+  ],
+  "author": "",
+  "license": "MIT"
+}

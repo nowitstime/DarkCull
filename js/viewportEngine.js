@@ -25,8 +25,8 @@ export class ViewportEngine {
     this._pendingLoads = new Map(); // photo.id -> Promise (one in-flight load per photo)
 
     // Window size settings
-    this.windowBefore = 3;
-    this.windowAfter = 8;
+    this.windowBefore = typeof options.windowBefore === 'number' ? options.windowBefore : 3;
+    this.windowAfter = typeof options.windowAfter === 'number' ? options.windowAfter : 8;
 
     // Cache: Map<photoId, { url: string, img: HTMLImageElement, decoded: boolean }>
     this.preloaded = new Map();
@@ -35,7 +35,7 @@ export class ViewportEngine {
     this.isZoomed = false;
     this.zoomScale = 1;
     this.minZoomScale = 1;
-    this.maxZoomScale = 6;
+    this.maxZoomScale = typeof options.maxZoomScale === 'number' ? options.maxZoomScale : 6;
     this.panX = 0;
     this.panY = 0;
 
@@ -412,14 +412,15 @@ export class ViewportEngine {
   }
 
   zoomToScale(targetScale, originX = null, originY = null, animate = true) {
+    const clampedScale = Math.max(this.minZoomScale, Math.min(this.maxZoomScale, targetScale));
     const rect = this.container.getBoundingClientRect();
     const relX = originX !== null ? originX - rect.left - rect.width / 2 : 0;
     const relY = originY !== null ? originY - rect.top - rect.height / 2 : 0;
 
     const prevScale = this.zoomScale || 1;
-    const ratio = targetScale / prevScale;
+    const ratio = clampedScale / prevScale;
 
-    this.zoomScale = targetScale;
+    this.zoomScale = clampedScale;
     if (prevScale <= 1.01) {
       this.panX = -relX * (this.zoomScale - 1);
       this.panY = -relY * (this.zoomScale - 1);

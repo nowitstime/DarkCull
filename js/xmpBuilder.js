@@ -44,15 +44,17 @@ export class XmpBuilder {
         rawRating = parseInt(tagMatch[1], 10);
       } else {
         // Fallback using DOMParser if in browser
-        try {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(xmlString, "application/xml");
-          const desc = doc.querySelector("Description");
-          if (desc && desc.hasAttribute("xmp:Rating")) {
-            rawRating = parseInt(desc.getAttribute("xmp:Rating"), 10);
+        if (typeof DOMParser !== 'undefined') {
+          try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(xmlString, "application/xml");
+            const desc = doc.querySelector("Description");
+            if (desc && desc.hasAttribute("xmp:Rating")) {
+              rawRating = parseInt(desc.getAttribute("xmp:Rating"), 10);
+            }
+          } catch (e) {
+            console.warn("DOMParser failed to parse XMP rating:", e);
           }
-        } catch (e) {
-          console.warn("DOMParser failed to parse XMP rating:", e);
         }
       }
     }
